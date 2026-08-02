@@ -5,6 +5,7 @@ src/harbor/__main__.py
 src/harbor/cli.py
 src/harbor/config.py
 src/harbor/logging.py
+src/harbor/smoke.py
 src/harbor.egg-info/PKG-INFO
 src/harbor.egg-info/SOURCES.txt
 src/harbor.egg-info/dependency_links.txt

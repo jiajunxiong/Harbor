@@ -9,6 +9,16 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'pg_isready --username "$$POSTGRES_USER" --dbname "$$POSTGRES_DB" || { echo "PostgreSQL health check failed." >&2; exit 1; }',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   redis:
     image: redis:7-alpine
