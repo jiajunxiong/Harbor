@@ -41,7 +41,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _show_config(parser: argparse.ArgumentParser) -> int:
     """Load, log, and render the active non-secret configuration."""
     try:
-        settings = Settings()
+        settings = Settings()  # type: ignore[call-arg]
     except ValidationError as error:
         parser.error(f"Invalid configuration: {error}")
         return 2

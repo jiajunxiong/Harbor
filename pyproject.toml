@@ -15,7 +15,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+	"mypy>=1.11,<2",
 	"pytest>=8.0,<9",
+	"ruff>=0.6,<1",
 ]
 
 [project.scripts]
@@ -26,3 +28,16 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src"]
+strict = true

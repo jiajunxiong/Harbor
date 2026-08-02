@@ -62,5 +62,7 @@ class Settings(BaseSettings):
         """Require a non-empty database URL with an explicit scheme."""
         normalized_value = value.strip()
         if "://" not in normalized_value:
-            raise ValueError("DATABASE_URL must include a URI scheme, such as postgresql+psycopg://.")
+            raise ValueError(
+                "DATABASE_URL must include a URI scheme, such as postgresql+psycopg://."
+            )
         return normalized_value
