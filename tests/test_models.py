@@ -2,7 +2,7 @@
 
 import unittest
 
-from harbor.storage.models import DailyQuote, Security
+from harbor.storage.models import DailyQuote, Dividend, Security
 
 
 class SecuritiesModelTests(unittest.TestCase):
@@ -63,3 +63,34 @@ class DailyQuoteModelTests(unittest.TestCase):
             {foreign_key.target_fullname for foreign_key in table.foreign_keys},
             {"securities.market", "securities.symbol"},
         )
+
+
+class DividendModelTests(unittest.TestCase):
+    """Verify the dividends schema contract."""
+
+    def test_dividends_has_required_fields_and_composite_primary_key(self) -> None:
+        table = Dividend.__table__
+
+        self.assertEqual(table.name, "dividends")
+        self.assertEqual(
+            tuple(table.primary_key.columns.keys()),
+            ("market", "symbol", "ex_date"),
+        )
+        self.assertEqual(
+            set(table.columns.keys()),
+            {
+                "market",
+                "symbol",
+                "ex_date",
+                "record_date",
+                "payment_date",
+                "amount",
+                "type",
+                "currency",
+            },
+        )
+        self.assertEqual(
+            {foreign_key.target_fullname for foreign_key in table.foreign_keys},
+            {"securities.market", "securities.symbol"},
+        )
+        self.assertIn("ck_dividends_type", {constraint.name for constraint in table.constraints})

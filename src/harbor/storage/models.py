@@ -56,3 +56,26 @@ class DailyQuote(Base):
     volume: Mapped[int] = mapped_column(BigInteger, nullable=False)
     adjusted_close: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
     source: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class Dividend(Base):
+    """A cash dividend declared for a listed security."""
+
+    __tablename__ = "dividends"
+    __table_args__ = (
+        CheckConstraint("type IN ('regular', 'special')", name="ck_dividends_type"),
+        ForeignKeyConstraint(
+            ["market", "symbol"],
+            ["securities.market", "securities.symbol"],
+            name="fk_dividends_security",
+        ),
+    )
+
+    market: Mapped[str] = mapped_column(String(2), primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    ex_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    record_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    payment_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    amount: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    type: Mapped[str] = mapped_column(String(16), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
