@@ -1,6 +1,8 @@
+alembic<2,>=1.13
 pydantic<3,>=2.8
 pydantic-settings<3,>=2.3
 psycopg[binary]<4,>=3.2
+SQLAlchemy<3,>=2.0
 
 [dev]
 mypy<2,>=1.11

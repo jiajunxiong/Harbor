@@ -4,9 +4,11 @@ Version: 0.1.0
 Summary: Hong Kong and U.S. equity research and paper-trading system
 Requires-Python: >=3.11
 Description-Content-Type: text/markdown
+Requires-Dist: alembic<2,>=1.13
 Requires-Dist: pydantic<3,>=2.8
 Requires-Dist: pydantic-settings<3,>=2.3
 Requires-Dist: psycopg[binary]<4,>=3.2
+Requires-Dist: SQLAlchemy<3,>=2.0
 Provides-Extra: dev
 Requires-Dist: mypy<2,>=1.11; extra == "dev"
 Requires-Dist: pytest<9,>=8.0; extra == "dev"
