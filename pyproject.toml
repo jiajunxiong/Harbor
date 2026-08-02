@@ -13,6 +13,9 @@ dependencies = [
 	"pydantic-settings>=2.3,<3",
 ]
 
+[project.scripts]
+harbor-cli = "harbor.cli:main"
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 
