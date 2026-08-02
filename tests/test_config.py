@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from pydantic import ValidationError
 
-from harbor.config import MarketTarget, Settings
+from harbor.config import LogLevel, MarketTarget, Settings
 
 
 class SettingsTests(unittest.TestCase):
@@ -22,6 +22,16 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.market_target, MarketTarget.BOTH)
         self.assertEqual(settings.data_provider_hk, "mock")
         self.assertEqual(settings.data_provider_us, "mock")
+        self.assertEqual(settings.log_level, LogLevel.INFO)
+
+    def test_log_level_is_normalized(self) -> None:
+        with patch.dict(os.environ, {"LOG_LEVEL": "debug"}, clear=True):
+            settings = Settings(
+                _env_file=None,
+                database_url="postgresql+psycopg://harbor:secret@localhost:5432/harbor",
+            )
+
+        self.assertEqual(settings.log_level, LogLevel.DEBUG)
 
     def test_missing_database_url_is_rejected(self) -> None:
         with patch.dict(os.environ, {}, clear=True):

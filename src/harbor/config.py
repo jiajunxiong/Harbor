@@ -14,6 +14,16 @@ class MarketTarget(StrEnum):
     BOTH = "BOTH"
 
 
+class LogLevel(StrEnum):
+    """Supported application logging thresholds."""
+
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    CRITICAL = "CRITICAL"
+
+
 class Settings(BaseSettings):
     """Application settings supplied through environment variables or `.env`."""
 
@@ -27,7 +37,15 @@ class Settings(BaseSettings):
     data_provider_hk: str = "mock"
     data_provider_us: str = "mock"
     database_url: str
-    log_level: str = "INFO"
+    log_level: LogLevel = LogLevel.INFO
+
+    @field_validator("log_level", mode="before")
+    @classmethod
+    def normalize_log_level(cls, value: object) -> object:
+        """Accept case-insensitive text values for configured log levels."""
+        if isinstance(value, str):
+            return value.upper()
+        return value
 
     @field_validator("data_provider_hk", "data_provider_us")
     @classmethod
