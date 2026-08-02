@@ -1,9 +1,16 @@
 README.md
 pyproject.toml
 src/harbor/__init__.py
+src/harbor/__main__.py
+src/harbor/cli.py
 src/harbor/config.py
+src/harbor/logging.py
 src/harbor.egg-info/PKG-INFO
 src/harbor.egg-info/SOURCES.txt
 src/harbor.egg-info/dependency_links.txt
+src/harbor.egg-info/entry_points.txt
 src/harbor.egg-info/requires.txt
 src/harbor.egg-info/top_level.txt
+tests/test_cli.py
+tests/test_config.py
+tests/test_logging.py

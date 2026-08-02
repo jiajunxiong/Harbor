@@ -1,0 +1,2 @@
+[console_scripts]
+harbor-cli = harbor.cli:main
