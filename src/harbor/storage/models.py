@@ -79,3 +79,25 @@ class Dividend(Base):
     amount: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
     type: Mapped[str] = mapped_column(String(16), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
+
+
+class Financial(Base):
+    """Reported financial indicators for a listed security."""
+
+    __tablename__ = "financials"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["market", "symbol"],
+            ["securities.market", "securities.symbol"],
+            name="fk_financials_security",
+        ),
+    )
+
+    market: Mapped[str] = mapped_column(String(2), primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    report_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    fiscal_period: Mapped[str] = mapped_column(String(16), primary_key=True)
+    roe: Mapped[float | None] = mapped_column(Numeric(20, 6), nullable=True)
+    net_income: Mapped[float | None] = mapped_column(Numeric(20, 6), nullable=True)
+    total_equity: Mapped[float | None] = mapped_column(Numeric(20, 6), nullable=True)
+    revenue: Mapped[float | None] = mapped_column(Numeric(20, 6), nullable=True)
