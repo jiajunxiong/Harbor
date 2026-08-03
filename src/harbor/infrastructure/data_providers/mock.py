@@ -69,6 +69,14 @@ _DIVIDEND_INTERVAL_DAYS: dict[MarketTarget, int] = {
     MarketTarget.US: 90,
 }
 
+_EQUITY_RANGE_BY_MARKET: dict[MarketTarget, tuple[float, float]] = {
+    MarketTarget.HK: (20_000_000_000.0, 500_000_000_000.0),
+    MarketTarget.US: (20_000_000_000.0, 400_000_000_000.0),
+}
+
+_FINANCIALS_START_YEAR = 2020
+_FINANCIALS_END_YEAR = 2025
+
 
 def _symbol_seed(market: MarketTarget, symbol: str) -> int:
     """Return a deterministic seed derived from a market and symbol."""
@@ -187,4 +195,35 @@ class MockProvider(MarketDataProvider):
                 }
             )
             ex_date += timedelta(days=interval_days)
+        return rows
+
+    def fetch_financials(
+        self,
+        market: MarketTarget,
+        symbol: str,
+    ) -> Sequence[Mapping[str, Any]]:
+        """Return deterministic mock financial indicator rows for a symbol."""
+        if market not in _SECURITIES_BY_MARKET:
+            raise ValueError(f"fetch_financials does not support {market.value!r}.")
+        rng = random.Random(_symbol_seed(market, symbol))
+        equity_low, equity_high = _EQUITY_RANGE_BY_MARKET[market]
+        rows: list[Mapping[str, Any]] = []
+        for year in range(_FINANCIALS_START_YEAR, _FINANCIALS_END_YEAR + 1):
+            total_equity = round(rng.uniform(equity_low, equity_high), 2)
+            roe = round(rng.uniform(0.05, 0.35), 4)
+            net_income = round(total_equity * roe, 2)
+            net_margin = rng.uniform(0.05, 0.30)
+            revenue = round(net_income / net_margin, 2)
+            rows.append(
+                {
+                    "market": market.value,
+                    "symbol": symbol,
+                    "report_date": date(year, 12, 31),
+                    "fiscal_period": str(year),
+                    "roe": roe,
+                    "net_income": net_income,
+                    "total_equity": total_equity,
+                    "revenue": revenue,
+                }
+            )
         return rows

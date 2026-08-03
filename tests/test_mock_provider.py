@@ -219,3 +219,53 @@ class MockProviderDividendsTests(unittest.TestCase):
                 date(2026, 1, 1),
                 date(2026, 12, 31),
             )
+
+
+class MockProviderFinancialsTests(unittest.TestCase):
+    """Verify the mock financials generation contract."""
+
+    def test_hk_financials_are_deterministic(self) -> None:
+        provider = MockProvider()
+
+        first = provider.fetch_financials(MarketTarget.HK, "0700.HK")
+        second = provider.fetch_financials(MarketTarget.HK, "0700.HK")
+
+        self.assertEqual(first, second)
+
+    def test_financials_rows_match_schema_and_consistency(self) -> None:
+        rows = MockProvider().fetch_financials(MarketTarget.HK, "0700.HK")
+
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertEqual(
+                set(row),
+                {
+                    "market",
+                    "symbol",
+                    "report_date",
+                    "fiscal_period",
+                    "roe",
+                    "net_income",
+                    "total_equity",
+                    "revenue",
+                },
+            )
+            self.assertEqual(row["market"], "HK")
+            self.assertEqual(row["symbol"], "0700.HK")
+            self.assertGreater(row["roe"], 0)
+            self.assertGreater(row["net_income"], 0)
+            self.assertGreater(row["total_equity"], 0)
+            self.assertGreater(row["revenue"], row["net_income"])
+
+    def test_financials_cover_multiple_fiscal_years(self) -> None:
+        rows = MockProvider().fetch_financials(MarketTarget.US, "AAPL")
+
+        periods = {row["fiscal_period"] for row in rows}
+        self.assertGreaterEqual(len(periods), 5)
+        for row in rows:
+            self.assertEqual(row["market"], "US")
+            self.assertEqual(row["fiscal_period"], str(row["report_date"].year))
+
+    def test_both_target_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            MockProvider().fetch_financials(MarketTarget.BOTH, "0700.HK")
