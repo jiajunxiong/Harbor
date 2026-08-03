@@ -59,6 +59,16 @@ _PRICE_RANGE_BY_MARKET: dict[MarketTarget, tuple[float, float]] = {
     MarketTarget.US: (20.0, 500.0),
 }
 
+_CURRENCY_BY_MARKET: dict[MarketTarget, str] = {
+    MarketTarget.HK: "HKD",
+    MarketTarget.US: "USD",
+}
+
+_DIVIDEND_INTERVAL_DAYS: dict[MarketTarget, int] = {
+    MarketTarget.HK: 180,
+    MarketTarget.US: 90,
+}
+
 
 def _symbol_seed(market: MarketTarget, symbol: str) -> int:
     """Return a deterministic seed derived from a market and symbol."""
@@ -140,4 +150,41 @@ class MockProvider(MarketDataProvider):
                 }
             )
             current_price = close_price
+        return rows
+
+    def fetch_dividends(
+        self,
+        market: MarketTarget,
+        symbol: str,
+        start: date,
+        end: date,
+    ) -> Sequence[Mapping[str, Any]]:
+        """Return deterministic mock dividend rows for a symbol."""
+        if market not in _SECURITIES_BY_MARKET:
+            raise ValueError(f"fetch_dividends does not support {market.value!r}.")
+        if end < start:
+            raise ValueError("end must not be earlier than start.")
+        currency = _CURRENCY_BY_MARKET[market]
+        interval_days = _DIVIDEND_INTERVAL_DAYS[market]
+        rng = random.Random(_symbol_seed(market, symbol))
+        ex_date = start + timedelta(days=rng.randint(0, interval_days - 1))
+        rows: list[Mapping[str, Any]] = []
+        index = 0
+        while ex_date <= end:
+            index += 1
+            is_special = index % 5 == 0
+            amount = round(rng.uniform(1.0, 10.0) if is_special else rng.uniform(0.1, 5.0), 2)
+            rows.append(
+                {
+                    "market": market.value,
+                    "symbol": symbol,
+                    "ex_date": ex_date,
+                    "record_date": ex_date + timedelta(days=2),
+                    "payment_date": ex_date + timedelta(days=12),
+                    "amount": amount,
+                    "type": "special" if is_special else "regular",
+                    "currency": currency,
+                }
+            )
+            ex_date += timedelta(days=interval_days)
         return rows

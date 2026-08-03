@@ -139,3 +139,83 @@ class MockProviderDailyQuotesTests(unittest.TestCase):
                 date(2026, 1, 5),
                 date(2026, 1, 9),
             )
+
+
+class MockProviderDividendsTests(unittest.TestCase):
+    """Verify the mock dividends generation contract."""
+
+    def test_hk_dividends_are_deterministic(self) -> None:
+        provider = MockProvider()
+        start, end = date(2025, 1, 1), date(2026, 12, 31)
+
+        first = provider.fetch_dividends(MarketTarget.HK, "0700.HK", start, end)
+        second = provider.fetch_dividends(MarketTarget.HK, "0700.HK", start, end)
+
+        self.assertEqual(first, second)
+
+    def test_hk_dividends_rows_match_schema_and_consistency(self) -> None:
+        rows = MockProvider().fetch_dividends(
+            MarketTarget.HK, "0700.HK", date(2025, 1, 1), date(2026, 12, 31)
+        )
+
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertEqual(
+                set(row),
+                {
+                    "market",
+                    "symbol",
+                    "ex_date",
+                    "record_date",
+                    "payment_date",
+                    "amount",
+                    "type",
+                    "currency",
+                },
+            )
+            self.assertEqual(row["market"], "HK")
+            self.assertEqual(row["symbol"], "0700.HK")
+            self.assertEqual(row["currency"], "HKD")
+            self.assertIn(row["type"], {"regular", "special"})
+            self.assertGreater(row["amount"], 0)
+            self.assertLess(row["ex_date"], row["record_date"])
+            self.assertLess(row["record_date"], row["payment_date"])
+
+    def test_hk_dividends_include_regular_and_special(self) -> None:
+        rows = MockProvider().fetch_dividends(
+            MarketTarget.HK, "0700.HK", date(2020, 1, 1), date(2026, 12, 31)
+        )
+
+        types = {row["type"] for row in rows}
+        self.assertIn("regular", types)
+        self.assertIn("special", types)
+
+    def test_us_dividends_currency_is_usd(self) -> None:
+        rows = MockProvider().fetch_dividends(
+            MarketTarget.US, "AAPL", date(2025, 1, 1), date(2026, 12, 31)
+        )
+
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertEqual(row["currency"], "USD")
+            self.assertIn(row["type"], {"regular", "special"})
+
+    def test_end_before_start_raises(self) -> None:
+        provider = MockProvider()
+        with self.assertRaises(ValueError):
+            provider.fetch_dividends(
+                MarketTarget.HK,
+                "0700.HK",
+                date(2026, 12, 31),
+                date(2026, 1, 1),
+            )
+
+    def test_both_target_raises(self) -> None:
+        provider = MockProvider()
+        with self.assertRaises(ValueError):
+            provider.fetch_dividends(
+                MarketTarget.BOTH,
+                "0700.HK",
+                date(2026, 1, 1),
+                date(2026, 12, 31),
+            )
