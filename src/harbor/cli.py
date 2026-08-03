@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from harbor import __version__
 from harbor.config import Settings
+from harbor.infrastructure.data_providers.factory import print_capability_report
 from harbor.logging import configure_logging, get_logger
 
 
@@ -18,6 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=__version__)
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("config", help="Show the active non-secret configuration.")
+    subparsers.add_parser("providers", help="Show the data provider capability report.")
     return parser
 
 
@@ -34,8 +36,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
     if arguments.command == "config":
         return _show_config(parser)
+    if arguments.command == "providers":
+        return _show_providers()
     parser.error(f"Unsupported command: {arguments.command}")
     return 2
+
+
+def _show_providers() -> int:
+    """Print the registered data provider capability report."""
+    print_capability_report()
+    return 0
 
 
 def _show_config(parser: argparse.ArgumentParser) -> int:

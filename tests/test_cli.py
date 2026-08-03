@@ -43,3 +43,12 @@ class CliTests(unittest.TestCase):
         self.assertEqual(summary["data_provider_us"], "yfinance")
         self.assertEqual(summary["log_level"], "DEBUG")
         self.assertNotIn("database_url", summary)
+
+    def test_providers_prints_capability_report(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output):
+            exit_code = main(["providers"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("mock", output.getvalue())
+        self.assertIn("yfinance", output.getvalue())
