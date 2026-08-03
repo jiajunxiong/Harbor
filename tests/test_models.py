@@ -13,6 +13,7 @@ from harbor.storage.models import (
     Fundamental,
     IngestionRun,
     Position,
+    RawPayload,
     Security,
 )
 
@@ -364,3 +365,35 @@ class IngestionRunModelTests(unittest.TestCase):
         constraint_names = {constraint.name for constraint in table.constraints}
         self.assertIn("ck_ingestion_runs_market", constraint_names)
         self.assertIn("ck_ingestion_runs_status", constraint_names)
+
+
+class RawPayloadModelTests(unittest.TestCase):
+    """Verify the raw payloads schema contract."""
+
+    def test_raw_payloads_has_required_fields_and_primary_key(self) -> None:
+        table = RawPayload.__table__
+
+        self.assertEqual(table.name, "raw_payloads")
+        self.assertEqual(tuple(table.primary_key.columns.keys()), ("id",))
+        self.assertEqual(
+            set(table.columns.keys()),
+            {
+                "id",
+                "run_id",
+                "market",
+                "symbol",
+                "endpoint",
+                "payload",
+                "retrieved_at",
+            },
+        )
+        self.assertEqual(
+            {foreign_key.target_fullname for foreign_key in table.foreign_keys},
+            {"ingestion_runs.run_id"},
+        )
+        self.assertFalse(table.columns["run_id"].nullable)
+        self.assertFalse(table.columns["market"].nullable)
+        self.assertTrue(table.columns["symbol"].nullable)
+        self.assertFalse(table.columns["endpoint"].nullable)
+        self.assertFalse(table.columns["payload"].nullable)
+        self.assertFalse(table.columns["retrieved_at"].nullable)

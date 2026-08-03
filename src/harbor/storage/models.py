@@ -14,6 +14,7 @@ from sqlalchemy import (
     Text,
     true,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -277,3 +278,24 @@ class IngestionRun(Base):
     source: Mapped[str] = mapped_column(String(64), nullable=False)
     records_processed: Mapped[int] = mapped_column(BigInteger, nullable=False)
     errors: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class RawPayload(Base):
+    """A raw response payload captured during an ingestion run."""
+
+    __tablename__ = "raw_payloads"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["run_id"],
+            ["ingestion_runs.run_id"],
+            name="fk_raw_payloads_ingestion_run",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    market: Mapped[str] = mapped_column(String(2), nullable=False)
+    symbol: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    endpoint: Mapped[str] = mapped_column(String(255), nullable=False)
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
