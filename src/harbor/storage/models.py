@@ -12,6 +12,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    false,
     true,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -299,3 +300,29 @@ class RawPayload(Base):
     endpoint: Mapped[str] = mapped_column(String(255), nullable=False)
     payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class QualityIssue(Base):
+    """A data-quality finding recorded for an ingestion run."""
+
+    __tablename__ = "quality_issues"
+    __table_args__ = (
+        CheckConstraint(
+            "severity IN ('warning', 'error')",
+            name="ck_quality_issues_severity",
+        ),
+        ForeignKeyConstraint(
+            ["run_id"],
+            ["ingestion_runs.run_id"],
+            name="fk_quality_issues_ingestion_run",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    market: Mapped[str] = mapped_column(String(2), nullable=False)
+    symbol: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    check_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
+    details: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolved: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())

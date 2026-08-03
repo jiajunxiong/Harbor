@@ -13,6 +13,7 @@ from harbor.storage.models import (
     Fundamental,
     IngestionRun,
     Position,
+    QualityIssue,
     RawPayload,
     Security,
 )
@@ -397,3 +398,36 @@ class RawPayloadModelTests(unittest.TestCase):
         self.assertFalse(table.columns["endpoint"].nullable)
         self.assertFalse(table.columns["payload"].nullable)
         self.assertFalse(table.columns["retrieved_at"].nullable)
+
+
+class QualityIssueModelTests(unittest.TestCase):
+    """Verify the quality issues schema contract."""
+
+    def test_quality_issues_has_required_fields_and_primary_key(self) -> None:
+        table = QualityIssue.__table__
+
+        self.assertEqual(table.name, "quality_issues")
+        self.assertEqual(tuple(table.primary_key.columns.keys()), ("id",))
+        self.assertEqual(
+            set(table.columns.keys()),
+            {
+                "id",
+                "run_id",
+                "market",
+                "symbol",
+                "check_name",
+                "severity",
+                "details",
+                "resolved",
+            },
+        )
+        self.assertEqual(
+            {foreign_key.target_fullname for foreign_key in table.foreign_keys},
+            {"ingestion_runs.run_id"},
+        )
+        constraint_names = {constraint.name for constraint in table.constraints}
+        self.assertIn("ck_quality_issues_severity", constraint_names)
+        self.assertFalse(table.columns["run_id"].nullable)
+        self.assertTrue(table.columns["symbol"].nullable)
+        self.assertFalse(table.columns["severity"].nullable)
+        self.assertFalse(table.columns["resolved"].nullable)
