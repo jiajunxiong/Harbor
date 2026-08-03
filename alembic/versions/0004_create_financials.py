@@ -18,7 +18,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Create the financial indicators table."""
+    """Create the financial indicators and fundamentals tables."""
     op.create_table(
         "financials",
         sa.Column("market", sa.String(length=2), nullable=False),
@@ -42,8 +42,25 @@ def upgrade() -> None:
             name="pk_financials",
         ),
     )
+    op.create_table(
+        "fundamentals",
+        sa.Column("market", sa.String(length=2), nullable=False),
+        sa.Column("symbol", sa.String(length=32), nullable=False),
+        sa.Column("date", sa.Date(), nullable=False),
+        sa.Column("dividend_yield", sa.Numeric(precision=20, scale=6), nullable=True),
+        sa.Column("payout_ratio", sa.Numeric(precision=20, scale=6), nullable=True),
+        sa.Column("pe_ratio", sa.Numeric(precision=20, scale=6), nullable=True),
+        sa.Column("pb_ratio", sa.Numeric(precision=20, scale=6), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["market", "symbol"],
+            ["securities.market", "securities.symbol"],
+            name="fk_fundamentals_security",
+        ),
+        sa.PrimaryKeyConstraint("market", "symbol", "date", name="pk_fundamentals"),
+    )
 
 
 def downgrade() -> None:
-    """Drop the financial indicators table."""
+    """Drop the financial indicators and fundamentals tables."""
+    op.drop_table("fundamentals")
     op.drop_table("financials")

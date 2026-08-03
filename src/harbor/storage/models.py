@@ -101,3 +101,24 @@ class Financial(Base):
     net_income: Mapped[float | None] = mapped_column(Numeric(20, 6), nullable=True)
     total_equity: Mapped[float | None] = mapped_column(Numeric(20, 6), nullable=True)
     revenue: Mapped[float | None] = mapped_column(Numeric(20, 6), nullable=True)
+
+
+class Fundamental(Base):
+    """Reference valuation and dividend metrics for a listed security."""
+
+    __tablename__ = "fundamentals"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["market", "symbol"],
+            ["securities.market", "securities.symbol"],
+            name="fk_fundamentals_security",
+        ),
+    )
+
+    market: Mapped[str] = mapped_column(String(2), primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    date: Mapped[date] = mapped_column(Date, primary_key=True)
+    dividend_yield: Mapped[float | None] = mapped_column(Numeric(20, 6), nullable=True)
+    payout_ratio: Mapped[float | None] = mapped_column(Numeric(20, 6), nullable=True)
+    pe_ratio: Mapped[float | None] = mapped_column(Numeric(20, 6), nullable=True)
+    pb_ratio: Mapped[float | None] = mapped_column(Numeric(20, 6), nullable=True)

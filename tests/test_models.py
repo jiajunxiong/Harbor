@@ -2,7 +2,7 @@
 
 import unittest
 
-from harbor.storage.models import DailyQuote, Dividend, Financial, Security
+from harbor.storage.models import DailyQuote, Dividend, Financial, Fundamental, Security
 
 
 class SecuritiesModelTests(unittest.TestCase):
@@ -118,6 +118,35 @@ class FinancialModelTests(unittest.TestCase):
                 "net_income",
                 "total_equity",
                 "revenue",
+            },
+        )
+        self.assertEqual(
+            {foreign_key.target_fullname for foreign_key in table.foreign_keys},
+            {"securities.market", "securities.symbol"},
+        )
+
+
+class FundamentalsModelTests(unittest.TestCase):
+    """Verify the fundamentals schema contract."""
+
+    def test_fundamentals_has_required_fields_and_composite_primary_key(self) -> None:
+        table = Fundamental.__table__
+
+        self.assertEqual(table.name, "fundamentals")
+        self.assertEqual(
+            tuple(table.primary_key.columns.keys()),
+            ("market", "symbol", "date"),
+        )
+        self.assertEqual(
+            set(table.columns.keys()),
+            {
+                "market",
+                "symbol",
+                "date",
+                "dividend_yield",
+                "payout_ratio",
+                "pe_ratio",
+                "pb_ratio",
             },
         )
         self.assertEqual(
