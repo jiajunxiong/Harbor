@@ -17,6 +17,7 @@ from harbor.storage.models import (
     RawPayload,
     Security,
     v_quality_summary_hk,
+    v_quality_summary_us,
 )
 
 
@@ -435,12 +436,25 @@ class QualityIssueModelTests(unittest.TestCase):
 
 
 class QualitySummaryViewTests(unittest.TestCase):
-    """Verify the Hong Kong market quality summary view contract."""
+    """Verify the market quality summary view contracts."""
 
     def test_quality_summary_hk_has_expected_columns(self) -> None:
         self.assertEqual(v_quality_summary_hk.name, "v_quality_summary_hk")
         self.assertEqual(
             set(v_quality_summary_hk.columns.keys()),
+            {
+                "check_name",
+                "severity",
+                "issue_count",
+                "resolved_count",
+                "unresolved_count",
+            },
+        )
+
+    def test_quality_summary_us_has_expected_columns(self) -> None:
+        self.assertEqual(v_quality_summary_us.name, "v_quality_summary_us")
+        self.assertEqual(
+            set(v_quality_summary_us.columns.keys()),
             {
                 "check_name",
                 "severity",

@@ -340,3 +340,13 @@ v_quality_summary_hk = Table(
     Column("resolved_count", Integer),
     Column("unresolved_count", Integer),
 )
+
+v_quality_summary_us = Table(
+    "v_quality_summary_us",
+    Base.metadata,
+    Column("check_name", String(128)),
+    Column("severity", String(16)),
+    Column("issue_count", Integer),
+    Column("resolved_count", Integer),
+    Column("unresolved_count", Integer),
+)
