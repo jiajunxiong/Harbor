@@ -9,6 +9,8 @@ from harbor.infrastructure.data_providers.yfinance import (
     HKYFinanceProvider,
     USYFinanceProvider,
     standardize_daily_quotes,
+    standardize_dividends,
+    standardize_splits,
 )
 
 
@@ -126,3 +128,92 @@ class DailyQuoteStandardizationTests(unittest.TestCase):
         rows = standardize_daily_quotes(MarketTarget.HK, "0700.HK", dates, columns, "yfinance")
 
         self.assertEqual(rows[0]["date"], date(2026, 1, 5))
+
+
+class DividendSplitStandardizationTests(unittest.TestCase):
+    """Verify the yfinance dividend and split standardization contract."""
+
+    def test_standardize_dividends_maps_to_dividend_rows(self) -> None:
+        dividends = {
+            date(2026, 3, 2): 3.85,
+            date(2026, 9, 1): 3.85,
+        }
+
+        rows = standardize_dividends(MarketTarget.HK, "0700.HK", dividends, "yfinance")
+
+        self.assertEqual(len(rows), 2)
+        row = rows[0]
+        self.assertEqual(
+            set(row),
+            {
+                "market",
+                "symbol",
+                "ex_date",
+                "record_date",
+                "payment_date",
+                "amount",
+                "type",
+                "currency",
+            },
+        )
+        self.assertEqual(row["market"], "HK")
+        self.assertEqual(row["symbol"], "0700.HK")
+        self.assertEqual(row["ex_date"], date(2026, 3, 2))
+        self.assertIsNone(row["record_date"])
+        self.assertIsNone(row["payment_date"])
+        self.assertEqual(row["amount"], 3.85)
+        self.assertEqual(row["type"], "regular")
+        self.assertEqual(row["currency"], "HKD")
+
+    def test_standardize_dividends_uses_market_currency(self) -> None:
+        rows = standardize_dividends(MarketTarget.US, "AAPL", {date(2026, 2, 9): 0.25}, "yfinance")
+
+        self.assertEqual(rows[0]["currency"], "USD")
+
+    def test_standardize_dividends_drops_invalid_rows(self) -> None:
+        dividends = {
+            date(2026, 3, 2): 3.85,
+            date(2026, 9, 1): None,
+        }
+
+        rows = standardize_dividends(MarketTarget.HK, "0700.HK", dividends, "yfinance")
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["ex_date"], date(2026, 3, 2))
+
+    def test_standardize_splits_maps_to_corporate_action_rows(self) -> None:
+        rows = standardize_splits(MarketTarget.US, "AAPL", {date(2026, 6, 1): 4.0}, "yfinance")
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(
+            set(row),
+            {
+                "market",
+                "symbol",
+                "action_id",
+                "announce_date",
+                "ex_date",
+                "record_date",
+                "effective_date",
+                "action_type",
+                "status",
+                "source",
+            },
+        )
+        self.assertEqual(row["market"], "US")
+        self.assertEqual(row["symbol"], "AAPL")
+        self.assertEqual(row["ex_date"], date(2026, 6, 1))
+        self.assertEqual(row["action_type"], "split")
+        self.assertEqual(row["status"], "completed")
+        self.assertEqual(row["source"], "yfinance")
+        self.assertTrue(row["action_id"].startswith("AAPL-split-"))
+
+    def test_standardize_splits_assigns_unique_action_ids(self) -> None:
+        splits = {date(2026, 1, 5): 2.0, date(2026, 7, 1): 3.0}
+
+        rows = standardize_splits(MarketTarget.HK, "0005.HK", splits, "yfinance")
+
+        action_ids = {row["action_id"] for row in rows}
+        self.assertEqual(len(action_ids), len(rows))
+        self.assertEqual(rows[0]["action_type"], "split")

@@ -8,6 +8,7 @@ from typing import Any, cast
 
 from harbor.config import MarketTarget
 from harbor.core.interfaces import Capability, MarketDataProvider, ProviderCapabilities
+from harbor.core.market_registry import get_market_config
 
 _ALL_CAPABILITIES = frozenset(Capability)
 
@@ -90,6 +91,89 @@ def standardize_daily_quotes(
     return rows
 
 
+def _index_date(value: object) -> date | None:
+    """Convert a yfinance index value (date/datetime/Timestamp) to a date."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return None
+
+
+def _in_range(value: object, start: date, end: date) -> bool:
+    """Return whether an index value falls within a closed date range."""
+    day = _index_date(value)
+    return day is not None and start <= day <= end
+
+
+def standardize_dividends(
+    market: MarketTarget,
+    symbol: str,
+    dividends: Mapping[object, object],
+    source: str,
+) -> list[dict[str, Any]]:
+    """Normalize yfinance dividend payouts into dividend rows.
+
+    yfinance reports cash dividends as ex-date to per-share amount pairs. The
+    record and payment dates are not available from yfinance, so they remain
+    unset, and the type defaults to ``regular``.
+    """
+    rows: list[dict[str, Any]] = []
+    for date_value, amount_value in sorted(
+        dividends.items(),
+        key=lambda item: _index_date(item[0]) or date.min,
+    ):
+        ex_date = _index_date(date_value)
+        amount = _optional_float(amount_value)
+        if ex_date is None or amount is None:
+            continue
+        rows.append(
+            {
+                "market": market.value,
+                "symbol": symbol,
+                "ex_date": ex_date,
+                "record_date": None,
+                "payment_date": None,
+                "amount": amount,
+                "type": "regular",
+                "currency": get_market_config(market).currency,
+            }
+        )
+    return rows
+
+
+def standardize_splits(
+    market: MarketTarget,
+    symbol: str,
+    splits: Mapping[object, object],
+    source: str,
+) -> list[dict[str, Any]]:
+    """Normalize yfinance split factors into corporate action rows."""
+    rows: list[dict[str, Any]] = []
+    for index, (date_value, factor_value) in enumerate(
+        sorted(splits.items(), key=lambda item: _index_date(item[0]) or date.min)
+    ):
+        factor = _optional_float(factor_value)
+        ex_date = _index_date(date_value)
+        if ex_date is None or factor is None or factor == 0:
+            continue
+        rows.append(
+            {
+                "market": market.value,
+                "symbol": symbol,
+                "action_id": f"{symbol}-split-{index + 1}",
+                "announce_date": None,
+                "ex_date": ex_date,
+                "record_date": None,
+                "effective_date": None,
+                "action_type": "split",
+                "status": "completed",
+                "source": source,
+            }
+        )
+    return rows
+
+
 class YFinanceProvider(MarketDataProvider):
     """Base class for yfinance-backed providers.
 
@@ -130,6 +214,44 @@ class YFinanceProvider(MarketDataProvider):
             dict(frame.to_dict("list")),
             source="yfinance",
         )
+
+    def fetch_dividends(
+        self,
+        market: MarketTarget,
+        symbol: str,
+        start: date,
+        end: date,
+    ) -> Sequence[Mapping[str, Any]]:
+        """Fetch and standardize dividends for a symbol from yfinance."""
+        self._require_market(market)
+        if end < start:
+            raise ValueError("end must not be earlier than start.")
+        raw = dict(self._ticker(symbol).dividends)
+        filtered = {
+            date_value: amount
+            for date_value, amount in raw.items()
+            if _in_range(date_value, start, end)
+        }
+        return standardize_dividends(market, symbol, filtered, "yfinance")
+
+    def fetch_corporate_actions(
+        self,
+        market: MarketTarget,
+        symbol: str,
+        start: date,
+        end: date,
+    ) -> Sequence[Mapping[str, Any]]:
+        """Fetch and standardize split actions for a symbol from yfinance."""
+        self._require_market(market)
+        if end < start:
+            raise ValueError("end must not be earlier than start.")
+        raw = dict(self._ticker(symbol).splits)
+        filtered = {
+            date_value: factor
+            for date_value, factor in raw.items()
+            if _in_range(date_value, start, end)
+        }
+        return standardize_splits(market, symbol, filtered, "yfinance")
 
 
 class HKYFinanceProvider(YFinanceProvider):
