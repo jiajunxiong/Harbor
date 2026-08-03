@@ -8,6 +8,7 @@ independently, so ``DATA_PROVIDER_HK`` and ``DATA_PROVIDER_US`` may differ.
 from harbor.config import MarketTarget
 from harbor.core.interfaces import MarketDataProvider
 from harbor.core.market_registry import validate_provider
+from harbor.infrastructure.data_providers.akshare import HKAKShareProvider
 from harbor.infrastructure.data_providers.mock import MockProvider
 from harbor.infrastructure.data_providers.yfinance import (
     HKYFinanceProvider,
@@ -19,6 +20,7 @@ _PROVIDER_CLASSES: dict[tuple[MarketTarget, str], type[MarketDataProvider]] = {
     (MarketTarget.US, "mock"): MockProvider,
     (MarketTarget.HK, "yfinance"): HKYFinanceProvider,
     (MarketTarget.US, "yfinance"): USYFinanceProvider,
+    (MarketTarget.HK, "akshare"): HKAKShareProvider,
 }
 
 

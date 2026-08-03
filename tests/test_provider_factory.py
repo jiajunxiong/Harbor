@@ -4,6 +4,7 @@ import unittest
 
 from harbor.config import MarketTarget
 from harbor.core.interfaces import Capability
+from harbor.infrastructure.data_providers.akshare import HKAKShareProvider
 from harbor.infrastructure.data_providers.factory import create_provider
 from harbor.infrastructure.data_providers.mock import MockProvider
 from harbor.infrastructure.data_providers.yfinance import (
@@ -29,9 +30,9 @@ class ProviderFactoryTests(unittest.TestCase):
         self.assertTrue(capabilities.supports(MarketTarget.HK, Capability.DAILY_QUOTES))
         self.assertTrue(capabilities.supports(MarketTarget.US, Capability.DAILY_QUOTES))
 
-    def test_allowed_but_unimplemented_provider_raises(self) -> None:
-        with self.assertRaises(NotImplementedError):
-            create_provider(MarketTarget.HK, "akshare")
+    def test_akshare_provider_for_hk(self) -> None:
+        provider = create_provider(MarketTarget.HK, "akshare")
+        self.assertIsInstance(provider, HKAKShareProvider)
 
     def test_yfinance_provider_for_hk(self) -> None:
         provider = create_provider(MarketTarget.HK, "yfinance")
