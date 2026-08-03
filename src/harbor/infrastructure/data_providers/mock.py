@@ -1,7 +1,9 @@
 """Mock market data provider for Harbor."""
 
-from collections.abc import Mapping, Sequence
-from datetime import date
+import random
+import zlib
+from collections.abc import Iterable, Mapping, Sequence
+from datetime import date, timedelta
 from typing import Any
 
 from harbor.config import MarketTarget
@@ -52,6 +54,25 @@ _SECURITIES_BY_MARKET: dict[MarketTarget, tuple[tuple[str, str, str], ...]] = {
     MarketTarget.US: _US_SECURITIES,
 }
 
+_PRICE_RANGE_BY_MARKET: dict[MarketTarget, tuple[float, float]] = {
+    MarketTarget.HK: (20.0, 200.0),
+    MarketTarget.US: (20.0, 500.0),
+}
+
+
+def _symbol_seed(market: MarketTarget, symbol: str) -> int:
+    """Return a deterministic seed derived from a market and symbol."""
+    return zlib.crc32(f"{market.value}:{symbol}".encode("utf-8"))
+
+
+def _trading_days(start: date, end: date) -> Iterable[date]:
+    """Yield weekdays within a closed date range."""
+    day = start
+    while day <= end:
+        if day.weekday() < 5:
+            yield day
+        day += timedelta(days=1)
+
 
 class MockProvider(MarketDataProvider):
     """A deterministic mock provider used for prototyping without a network."""
@@ -82,3 +103,41 @@ class MockProvider(MarketDataProvider):
             }
             for symbol, name, exchange in rows
         ]
+
+    def fetch_daily_quotes(
+        self,
+        market: MarketTarget,
+        symbol: str,
+        start: date,
+        end: date,
+    ) -> Sequence[Mapping[str, Any]]:
+        """Return deterministic mock daily OHLCV rows for a symbol."""
+        if market not in _SECURITIES_BY_MARKET:
+            raise ValueError(f"fetch_daily_quotes does not support {market.value!r}.")
+        if end < start:
+            raise ValueError("end must not be earlier than start.")
+        rng = random.Random(_symbol_seed(market, symbol))
+        price_low, price_high = _PRICE_RANGE_BY_MARKET[market]
+        current_price = round(rng.uniform(price_low, price_high), 2)
+        rows: list[Mapping[str, Any]] = []
+        for day in _trading_days(start, end):
+            open_price = current_price
+            close_price = round(max(1.0, open_price * (1 + rng.uniform(-0.03, 0.03))), 2)
+            high_price = round(max(open_price, close_price) * (1 + rng.uniform(0.0, 0.02)), 2)
+            low_price = round(min(open_price, close_price) * (1 - rng.uniform(0.0, 0.02)), 2)
+            rows.append(
+                {
+                    "market": market.value,
+                    "symbol": symbol,
+                    "date": day,
+                    "open": open_price,
+                    "high": high_price,
+                    "low": low_price,
+                    "close": close_price,
+                    "volume": rng.randint(1_000_000, 50_000_000),
+                    "adjusted_close": close_price,
+                    "source": "mock",
+                }
+            )
+            current_price = close_price
+        return rows
