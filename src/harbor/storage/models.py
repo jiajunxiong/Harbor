@@ -59,6 +59,12 @@ class DailyQuote(Base):
             "date",
             postgresql_where=text("market = 'HK'"),
         ),
+        Index(
+            "ix_daily_quotes_us_symbol_date",
+            "symbol",
+            "date",
+            postgresql_where=text("market = 'US'"),
+        ),
     )
 
     market: Mapped[str] = mapped_column(String(2), primary_key=True)

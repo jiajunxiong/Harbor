@@ -88,6 +88,14 @@ class DailyQuoteModelTests(unittest.TestCase):
         )
         self.assertEqual(tuple(index.columns.keys()), ("symbol", "date"))
 
+    def test_daily_quotes_has_us_partial_index(self) -> None:
+        table = DailyQuote.__table__
+
+        index = next(
+            index for index in table.indexes if index.name == "ix_daily_quotes_us_symbol_date"
+        )
+        self.assertEqual(tuple(index.columns.keys()), ("symbol", "date"))
+
 
 class DividendModelTests(unittest.TestCase):
     """Verify the dividends schema contract."""
