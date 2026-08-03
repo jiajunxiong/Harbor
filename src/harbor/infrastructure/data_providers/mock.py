@@ -8,6 +8,7 @@ from typing import Any
 
 from harbor.config import MarketTarget
 from harbor.core.interfaces import Capability, MarketDataProvider, ProviderCapabilities
+from harbor.core.market_registry import get_market_config
 
 _ALL_CAPABILITIES = frozenset(Capability)
 
@@ -226,4 +227,42 @@ class MockProvider(MarketDataProvider):
                     "revenue": revenue,
                 }
             )
+        return rows
+
+    def fetch_corporate_actions(
+        self,
+        market: MarketTarget,
+        symbol: str,
+        start: date,
+        end: date,
+    ) -> Sequence[Mapping[str, Any]]:
+        """Return deterministic mock corporate action rows for a symbol."""
+        if market not in _SECURITIES_BY_MARKET:
+            raise ValueError(f"fetch_corporate_actions does not support {market.value!r}.")
+        if end < start:
+            raise ValueError("end must not be earlier than start.")
+        action_types = tuple(
+            sorted(action.value for action in get_market_config(market).corporate_action_types)
+        )
+        rng = random.Random(_symbol_seed(market, symbol))
+        ex_date = start + timedelta(days=rng.randint(0, 364))
+        rows: list[Mapping[str, Any]] = []
+        index = 0
+        while ex_date <= end:
+            index += 1
+            rows.append(
+                {
+                    "market": market.value,
+                    "symbol": symbol,
+                    "action_id": f"{symbol}-{index}",
+                    "announce_date": ex_date - timedelta(days=14),
+                    "ex_date": ex_date,
+                    "record_date": ex_date + timedelta(days=2),
+                    "effective_date": ex_date + timedelta(days=10),
+                    "action_type": action_types[(index - 1) % len(action_types)],
+                    "status": "completed",
+                    "source": "mock",
+                }
+            )
+            ex_date += timedelta(days=365)
         return rows

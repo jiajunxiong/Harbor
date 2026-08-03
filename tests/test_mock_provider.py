@@ -269,3 +269,95 @@ class MockProviderFinancialsTests(unittest.TestCase):
     def test_both_target_raises(self) -> None:
         with self.assertRaises(ValueError):
             MockProvider().fetch_financials(MarketTarget.BOTH, "0700.HK")
+
+
+class MockProviderCorporateActionsTests(unittest.TestCase):
+    """Verify the mock corporate actions generation contract."""
+
+    def test_hk_corporate_actions_are_deterministic(self) -> None:
+        provider = MockProvider()
+        start, end = date(2015, 1, 1), date(2026, 12, 31)
+
+        first = provider.fetch_corporate_actions(MarketTarget.HK, "0005.HK", start, end)
+        second = provider.fetch_corporate_actions(MarketTarget.HK, "0005.HK", start, end)
+
+        self.assertEqual(first, second)
+
+    def test_hk_corporate_actions_use_hk_action_types(self) -> None:
+        rows = MockProvider().fetch_corporate_actions(
+            MarketTarget.HK, "0005.HK", date(2015, 1, 1), date(2026, 12, 31)
+        )
+
+        self.assertTrue(rows)
+        hk_types = {"rights_issue", "consolidation", "tender_offer", "dividend"}
+        for row in rows:
+            self.assertIn(row["action_type"], hk_types)
+
+    def test_us_corporate_actions_use_us_action_types(self) -> None:
+        rows = MockProvider().fetch_corporate_actions(
+            MarketTarget.US, "AAPL", date(2015, 1, 1), date(2026, 12, 31)
+        )
+
+        self.assertTrue(rows)
+        us_types = {"split", "merger", "spin_off", "dividend"}
+        for row in rows:
+            self.assertIn(row["action_type"], us_types)
+
+    def test_corporate_actions_rows_match_schema_and_lifecycle(self) -> None:
+        rows = MockProvider().fetch_corporate_actions(
+            MarketTarget.HK, "0005.HK", date(2015, 1, 1), date(2026, 12, 31)
+        )
+
+        self.assertTrue(rows)
+        action_ids = {row["action_id"] for row in rows}
+        self.assertEqual(len(action_ids), len(rows))
+        for row in rows:
+            self.assertEqual(
+                set(row),
+                {
+                    "market",
+                    "symbol",
+                    "action_id",
+                    "announce_date",
+                    "ex_date",
+                    "record_date",
+                    "effective_date",
+                    "action_type",
+                    "status",
+                    "source",
+                },
+            )
+            self.assertEqual(row["market"], "HK")
+            self.assertEqual(row["symbol"], "0005.HK")
+            self.assertEqual(row["source"], "mock")
+            self.assertLess(row["announce_date"], row["ex_date"])
+            self.assertLess(row["ex_date"], row["record_date"])
+            self.assertLess(row["record_date"], row["effective_date"])
+
+    def test_hk_corporate_actions_include_multiple_types(self) -> None:
+        rows = MockProvider().fetch_corporate_actions(
+            MarketTarget.HK, "0005.HK", date(2015, 1, 1), date(2026, 12, 31)
+        )
+
+        types = {row["action_type"] for row in rows}
+        self.assertGreaterEqual(len(types), 2)
+
+    def test_end_before_start_raises(self) -> None:
+        provider = MockProvider()
+        with self.assertRaises(ValueError):
+            provider.fetch_corporate_actions(
+                MarketTarget.HK,
+                "0005.HK",
+                date(2026, 12, 31),
+                date(2026, 1, 1),
+            )
+
+    def test_both_target_raises(self) -> None:
+        provider = MockProvider()
+        with self.assertRaises(ValueError):
+            provider.fetch_corporate_actions(
+                MarketTarget.BOTH,
+                "0005.HK",
+                date(2026, 1, 1),
+                date(2026, 12, 31),
+            )
