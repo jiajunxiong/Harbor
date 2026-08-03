@@ -3,6 +3,7 @@
 import unittest
 
 from harbor.storage.models import (
+    ActionTerm,
     CorporateAction,
     DailyQuote,
     Dividend,
@@ -194,5 +195,41 @@ class CorporateActionModelTests(unittest.TestCase):
         )
         self.assertIn(
             "ck_corporate_actions_action_type",
+            {constraint.name for constraint in table.constraints},
+        )
+
+
+class ActionTermModelTests(unittest.TestCase):
+    """Verify the action terms schema contract."""
+
+    def test_action_terms_has_required_fields_and_composite_primary_key(self) -> None:
+        table = ActionTerm.__table__
+
+        self.assertEqual(table.name, "action_terms")
+        self.assertEqual(
+            tuple(table.primary_key.columns.keys()),
+            ("market", "symbol", "action_id", "term_type"),
+        )
+        self.assertEqual(
+            set(table.columns.keys()),
+            {
+                "market",
+                "symbol",
+                "action_id",
+                "term_type",
+                "value",
+                "description",
+            },
+        )
+        self.assertEqual(
+            {foreign_key.target_fullname for foreign_key in table.foreign_keys},
+            {
+                "corporate_actions.market",
+                "corporate_actions.symbol",
+                "corporate_actions.action_id",
+            },
+        )
+        self.assertIn(
+            "ck_action_terms_term_type",
             {constraint.name for constraint in table.constraints},
         )

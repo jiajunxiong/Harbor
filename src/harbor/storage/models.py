@@ -153,3 +153,31 @@ class CorporateAction(Base):
     action_type: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     source: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class ActionTerm(Base):
+    """A specific term of a corporate action."""
+
+    __tablename__ = "action_terms"
+    __table_args__ = (
+        CheckConstraint(
+            "term_type IN ('ratio', 'price', 'option')",
+            name="ck_action_terms_term_type",
+        ),
+        ForeignKeyConstraint(
+            ["market", "symbol", "action_id"],
+            [
+                "corporate_actions.market",
+                "corporate_actions.symbol",
+                "corporate_actions.action_id",
+            ],
+            name="fk_action_terms_corporate_action",
+        ),
+    )
+
+    market: Mapped[str] = mapped_column(String(2), primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    action_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    term_type: Mapped[str] = mapped_column(String(16), primary_key=True)
+    value: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(255), nullable=True)
