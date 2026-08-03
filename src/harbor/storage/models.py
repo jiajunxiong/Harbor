@@ -6,11 +6,14 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Column,
     Date,
     DateTime,
     ForeignKeyConstraint,
+    Integer,
     Numeric,
     String,
+    Table,
     Text,
     false,
     true,
@@ -326,3 +329,14 @@ class QualityIssue(Base):
     severity: Mapped[str] = mapped_column(String(16), nullable=False)
     details: Mapped[str | None] = mapped_column(Text, nullable=True)
     resolved: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
+
+
+v_quality_summary_hk = Table(
+    "v_quality_summary_hk",
+    Base.metadata,
+    Column("check_name", String(128)),
+    Column("severity", String(16)),
+    Column("issue_count", Integer),
+    Column("resolved_count", Integer),
+    Column("unresolved_count", Integer),
+)
