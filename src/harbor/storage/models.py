@@ -122,3 +122,34 @@ class Fundamental(Base):
     payout_ratio: Mapped[float | None] = mapped_column(Numeric(20, 6), nullable=True)
     pe_ratio: Mapped[float | None] = mapped_column(Numeric(20, 6), nullable=True)
     pb_ratio: Mapped[float | None] = mapped_column(Numeric(20, 6), nullable=True)
+
+
+class CorporateAction(Base):
+    """A corporate action announced for a listed security."""
+
+    __tablename__ = "corporate_actions"
+    __table_args__ = (
+        CheckConstraint(
+            "action_type IN ("
+            "'split', 'consolidation', 'rights_issue', "
+            "'merger', 'spin_off', 'tender_offer', 'dividend'"
+            ")",
+            name="ck_corporate_actions_action_type",
+        ),
+        ForeignKeyConstraint(
+            ["market", "symbol"],
+            ["securities.market", "securities.symbol"],
+            name="fk_corporate_actions_security",
+        ),
+    )
+
+    market: Mapped[str] = mapped_column(String(2), primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    action_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    announce_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    ex_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    record_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    effective_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    action_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)

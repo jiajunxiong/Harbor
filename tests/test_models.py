@@ -2,7 +2,14 @@
 
 import unittest
 
-from harbor.storage.models import DailyQuote, Dividend, Financial, Fundamental, Security
+from harbor.storage.models import (
+    CorporateAction,
+    DailyQuote,
+    Dividend,
+    Financial,
+    Fundamental,
+    Security,
+)
 
 
 class SecuritiesModelTests(unittest.TestCase):
@@ -152,4 +159,40 @@ class FundamentalsModelTests(unittest.TestCase):
         self.assertEqual(
             {foreign_key.target_fullname for foreign_key in table.foreign_keys},
             {"securities.market", "securities.symbol"},
+        )
+
+
+class CorporateActionModelTests(unittest.TestCase):
+    """Verify the corporate actions schema contract."""
+
+    def test_corporate_actions_has_required_fields_and_composite_primary_key(self) -> None:
+        table = CorporateAction.__table__
+
+        self.assertEqual(table.name, "corporate_actions")
+        self.assertEqual(
+            tuple(table.primary_key.columns.keys()),
+            ("market", "symbol", "action_id"),
+        )
+        self.assertEqual(
+            set(table.columns.keys()),
+            {
+                "market",
+                "symbol",
+                "action_id",
+                "announce_date",
+                "ex_date",
+                "record_date",
+                "effective_date",
+                "action_type",
+                "status",
+                "source",
+            },
+        )
+        self.assertEqual(
+            {foreign_key.target_fullname for foreign_key in table.foreign_keys},
+            {"securities.market", "securities.symbol"},
+        )
+        self.assertIn(
+            "ck_corporate_actions_action_type",
+            {constraint.name for constraint in table.constraints},
         )
