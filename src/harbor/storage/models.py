@@ -232,3 +232,22 @@ class EquityEvent(Base):
     entitled_quantity: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
     cash_amount: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
     processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AdjustedFactor(Base):
+    """Adjustment factors used to compute adjusted prices for a listed security."""
+
+    __tablename__ = "adjusted_factors"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["market", "symbol", "date"],
+            ["daily_quotes.market", "daily_quotes.symbol", "daily_quotes.date"],
+            name="fk_adjusted_factors_daily_quote",
+        ),
+    )
+
+    market: Mapped[str] = mapped_column(String(2), primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    date: Mapped[date] = mapped_column(Date, primary_key=True)
+    cumulative_factor: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    daily_factor: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)

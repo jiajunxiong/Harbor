@@ -4,6 +4,7 @@ import unittest
 
 from harbor.storage.models import (
     ActionTerm,
+    AdjustedFactor,
     CorporateAction,
     DailyQuote,
     Dividend,
@@ -297,5 +298,36 @@ class EquityEventModelTests(unittest.TestCase):
                 "corporate_actions.market",
                 "corporate_actions.symbol",
                 "corporate_actions.action_id",
+            },
+        )
+
+
+class AdjustedFactorModelTests(unittest.TestCase):
+    """Verify the adjusted factors schema contract."""
+
+    def test_adjusted_factors_has_required_fields_and_composite_primary_key(self) -> None:
+        table = AdjustedFactor.__table__
+
+        self.assertEqual(table.name, "adjusted_factors")
+        self.assertEqual(
+            tuple(table.primary_key.columns.keys()),
+            ("market", "symbol", "date"),
+        )
+        self.assertEqual(
+            set(table.columns.keys()),
+            {
+                "market",
+                "symbol",
+                "date",
+                "cumulative_factor",
+                "daily_factor",
+            },
+        )
+        self.assertEqual(
+            {foreign_key.target_fullname for foreign_key in table.foreign_keys},
+            {
+                "daily_quotes.market",
+                "daily_quotes.symbol",
+                "daily_quotes.date",
             },
         )
