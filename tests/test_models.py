@@ -7,6 +7,7 @@ from harbor.storage.models import (
     CorporateAction,
     DailyQuote,
     Dividend,
+    EquityEvent,
     Financial,
     Fundamental,
     Position,
@@ -261,4 +262,40 @@ class PositionModelTests(unittest.TestCase):
         self.assertEqual(
             {foreign_key.target_fullname for foreign_key in table.foreign_keys},
             {"securities.market", "securities.symbol"},
+        )
+
+
+class EquityEventModelTests(unittest.TestCase):
+    """Verify the equity events schema contract."""
+
+    def test_equity_events_has_required_fields_and_composite_primary_key(self) -> None:
+        table = EquityEvent.__table__
+
+        self.assertEqual(table.name, "equity_events")
+        self.assertEqual(
+            tuple(table.primary_key.columns.keys()),
+            ("market", "symbol", "position_date", "action_id"),
+        )
+        self.assertEqual(
+            set(table.columns.keys()),
+            {
+                "market",
+                "symbol",
+                "position_date",
+                "action_id",
+                "entitled_quantity",
+                "cash_amount",
+                "processed_at",
+            },
+        )
+        self.assertEqual(
+            {foreign_key.target_fullname for foreign_key in table.foreign_keys},
+            {
+                "positions.market",
+                "positions.symbol",
+                "positions.date",
+                "corporate_actions.market",
+                "corporate_actions.symbol",
+                "corporate_actions.action_id",
+            },
         )

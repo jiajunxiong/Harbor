@@ -1,12 +1,13 @@
 """SQLAlchemy database models for Harbor market data."""
 
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
     Date,
+    DateTime,
     ForeignKeyConstraint,
     Numeric,
     String,
@@ -201,3 +202,33 @@ class Position(Base):
     quantity: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
     cost_basis: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
     market_value: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+
+
+class EquityEvent(Base):
+    """The calculated entitlement produced by a corporate action on a position."""
+
+    __tablename__ = "equity_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["market", "symbol", "position_date"],
+            ["positions.market", "positions.symbol", "positions.date"],
+            name="fk_equity_events_position",
+        ),
+        ForeignKeyConstraint(
+            ["market", "symbol", "action_id"],
+            [
+                "corporate_actions.market",
+                "corporate_actions.symbol",
+                "corporate_actions.action_id",
+            ],
+            name="fk_equity_events_corporate_action",
+        ),
+    )
+
+    market: Mapped[str] = mapped_column(String(2), primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    position_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    action_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    entitled_quantity: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    cash_amount: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
