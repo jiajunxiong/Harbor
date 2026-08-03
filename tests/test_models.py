@@ -11,6 +11,7 @@ from harbor.storage.models import (
     EquityEvent,
     Financial,
     Fundamental,
+    IngestionRun,
     Position,
     Security,
 )
@@ -331,3 +332,35 @@ class AdjustedFactorModelTests(unittest.TestCase):
                 "daily_quotes.date",
             },
         )
+
+
+class IngestionRunModelTests(unittest.TestCase):
+    """Verify the ingestion runs schema contract."""
+
+    def test_ingestion_runs_has_required_fields_and_primary_key(self) -> None:
+        table = IngestionRun.__table__
+
+        self.assertEqual(table.name, "ingestion_runs")
+        self.assertEqual(tuple(table.primary_key.columns.keys()), ("run_id",))
+        self.assertEqual(
+            set(table.columns.keys()),
+            {
+                "run_id",
+                "start_time",
+                "end_time",
+                "status",
+                "market",
+                "source",
+                "records_processed",
+                "errors",
+            },
+        )
+        self.assertFalse(table.columns["run_id"].nullable)
+        self.assertFalse(table.columns["start_time"].nullable)
+        self.assertFalse(table.columns["status"].nullable)
+        self.assertFalse(table.columns["market"].nullable)
+        self.assertFalse(table.columns["source"].nullable)
+        self.assertFalse(table.columns["records_processed"].nullable)
+        constraint_names = {constraint.name for constraint in table.constraints}
+        self.assertIn("ck_ingestion_runs_market", constraint_names)
+        self.assertIn("ck_ingestion_runs_status", constraint_names)

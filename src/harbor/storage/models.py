@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Numeric,
     String,
+    Text,
     true,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -251,3 +252,28 @@ class AdjustedFactor(Base):
     date: Mapped[date] = mapped_column(Date, primary_key=True)
     cumulative_factor: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
     daily_factor: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+
+
+class IngestionRun(Base):
+    """A record of a single data-ingestion run."""
+
+    __tablename__ = "ingestion_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "market IN ('HK', 'US', 'BOTH')",
+            name="ck_ingestion_runs_market",
+        ),
+        CheckConstraint(
+            "status IN ('running', 'completed', 'failed')",
+            name="ck_ingestion_runs_status",
+        ),
+    )
+
+    run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    market: Mapped[str] = mapped_column(String(4), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    records_processed: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    errors: Mapped[str | None] = mapped_column(Text, nullable=True)
