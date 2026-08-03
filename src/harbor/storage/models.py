@@ -10,12 +10,14 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKeyConstraint,
+    Index,
     Integer,
     Numeric,
     String,
     Table,
     Text,
     false,
+    text,
     true,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -50,6 +52,12 @@ class DailyQuote(Base):
             ["market", "symbol"],
             ["securities.market", "securities.symbol"],
             name="fk_daily_quotes_security",
+        ),
+        Index(
+            "ix_daily_quotes_hk_symbol_date",
+            "symbol",
+            "date",
+            postgresql_where=text("market = 'HK'"),
         ),
     )
 
