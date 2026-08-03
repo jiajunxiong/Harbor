@@ -181,3 +181,23 @@ class ActionTerm(Base):
     term_type: Mapped[str] = mapped_column(String(16), primary_key=True)
     value: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class Position(Base):
+    """A holdings snapshot for a listed security on a given date."""
+
+    __tablename__ = "positions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["market", "symbol"],
+            ["securities.market", "securities.symbol"],
+            name="fk_positions_security",
+        ),
+    )
+
+    market: Mapped[str] = mapped_column(String(2), primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    date: Mapped[date] = mapped_column(Date, primary_key=True)
+    quantity: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    cost_basis: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    market_value: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)

@@ -9,6 +9,7 @@ from harbor.storage.models import (
     Dividend,
     Financial,
     Fundamental,
+    Position,
     Security,
 )
 
@@ -232,4 +233,32 @@ class ActionTermModelTests(unittest.TestCase):
         self.assertIn(
             "ck_action_terms_term_type",
             {constraint.name for constraint in table.constraints},
+        )
+
+
+class PositionModelTests(unittest.TestCase):
+    """Verify the positions schema contract."""
+
+    def test_positions_has_required_fields_and_composite_primary_key(self) -> None:
+        table = Position.__table__
+
+        self.assertEqual(table.name, "positions")
+        self.assertEqual(
+            tuple(table.primary_key.columns.keys()),
+            ("market", "symbol", "date"),
+        )
+        self.assertEqual(
+            set(table.columns.keys()),
+            {
+                "market",
+                "symbol",
+                "date",
+                "quantity",
+                "cost_basis",
+                "market_value",
+            },
+        )
+        self.assertEqual(
+            {foreign_key.target_fullname for foreign_key in table.foreign_keys},
+            {"securities.market", "securities.symbol"},
         )
