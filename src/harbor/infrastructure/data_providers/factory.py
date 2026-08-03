@@ -9,9 +9,16 @@ from harbor.config import MarketTarget
 from harbor.core.interfaces import MarketDataProvider
 from harbor.core.market_registry import validate_provider
 from harbor.infrastructure.data_providers.mock import MockProvider
+from harbor.infrastructure.data_providers.yfinance import (
+    HKYFinanceProvider,
+    USYFinanceProvider,
+)
 
-_PROVIDER_CLASSES: dict[str, type[MarketDataProvider]] = {
-    "mock": MockProvider,
+_PROVIDER_CLASSES: dict[tuple[MarketTarget, str], type[MarketDataProvider]] = {
+    (MarketTarget.HK, "mock"): MockProvider,
+    (MarketTarget.US, "mock"): MockProvider,
+    (MarketTarget.HK, "yfinance"): HKYFinanceProvider,
+    (MarketTarget.US, "yfinance"): USYFinanceProvider,
 }
 
 
@@ -32,7 +39,7 @@ def create_provider(market: MarketTarget, provider_name: str) -> MarketDataProvi
             implemented.
     """
     validate_provider(market, provider_name)
-    provider_class = _PROVIDER_CLASSES.get(provider_name)
+    provider_class = _PROVIDER_CLASSES.get((market, provider_name))
     if provider_class is None:
         raise NotImplementedError(f"Provider {provider_name!r} is not implemented yet.")
     return provider_class()
