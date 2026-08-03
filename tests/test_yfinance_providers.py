@@ -10,6 +10,7 @@ from harbor.infrastructure.data_providers.yfinance import (
     USYFinanceProvider,
     standardize_daily_quotes,
     standardize_dividends,
+    standardize_financials,
     standardize_splits,
 )
 
@@ -217,3 +218,58 @@ class DividendSplitStandardizationTests(unittest.TestCase):
         action_ids = {row["action_id"] for row in rows}
         self.assertEqual(len(action_ids), len(rows))
         self.assertEqual(rows[0]["action_type"], "split")
+
+
+class FinancialStandardizationTests(unittest.TestCase):
+    """Verify the yfinance financials standardization contract."""
+
+    def test_standardize_financials_extracts_metrics(self) -> None:
+        info = {
+            "returnOnEquity": 0.25,
+            "netIncomeToCommon": 100_000_000_000.0,
+            "totalStockholderEquity": 400_000_000_000.0,
+            "totalRevenue": 390_000_000_000.0,
+        }
+
+        rows = standardize_financials(MarketTarget.US, "AAPL", info, date(2026, 3, 31))
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(
+            set(row),
+            {
+                "market",
+                "symbol",
+                "report_date",
+                "fiscal_period",
+                "roe",
+                "net_income",
+                "total_equity",
+                "revenue",
+            },
+        )
+        self.assertEqual(row["market"], "US")
+        self.assertEqual(row["symbol"], "AAPL")
+        self.assertEqual(row["report_date"], date(2026, 3, 31))
+        self.assertEqual(row["fiscal_period"], "2026")
+        self.assertEqual(row["roe"], 0.25)
+        self.assertEqual(row["net_income"], 100_000_000_000.0)
+        self.assertEqual(row["total_equity"], 400_000_000_000.0)
+        self.assertEqual(row["revenue"], 390_000_000_000.0)
+
+    def test_standardize_financials_returns_empty_when_all_metrics_missing(self) -> None:
+        rows = standardize_financials(MarketTarget.HK, "0700.HK", {}, date(2026, 3, 31))
+
+        self.assertEqual(rows, [])
+
+    def test_standardize_financials_keeps_missing_metrics_as_none(self) -> None:
+        info = {"returnOnEquity": 0.2}
+
+        rows = standardize_financials(MarketTarget.HK, "0700.HK", info, date(2026, 3, 31))
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["market"], "HK")
+        self.assertEqual(rows[0]["roe"], 0.2)
+        self.assertIsNone(rows[0]["net_income"])
+        self.assertIsNone(rows[0]["total_equity"])
+        self.assertIsNone(rows[0]["revenue"])

@@ -174,6 +174,45 @@ def standardize_splits(
     return rows
 
 
+def _report_date(info: Mapping[str, object]) -> date:
+    """Return the report date from a yfinance info snapshot, else today."""
+    quarter = _index_date(info.get("mostRecentQuarter"))
+    if quarter is not None:
+        return quarter
+    return date.today()
+
+
+def standardize_financials(
+    market: MarketTarget,
+    symbol: str,
+    info: Mapping[str, object],
+    report_date: date,
+) -> list[dict[str, Any]]:
+    """Extract key financial metrics from a yfinance info snapshot.
+
+    Missing metrics are retained as ``None`` (the financials columns are
+    nullable); if no metric is present at all the snapshot yields no row.
+    """
+    roe = _optional_float(info.get("returnOnEquity"))
+    net_income = _optional_float(info.get("netIncomeToCommon"))
+    total_equity = _optional_float(info.get("totalStockholderEquity"))
+    revenue = _optional_float(info.get("totalRevenue"))
+    if all(value is None for value in (roe, net_income, total_equity, revenue)):
+        return []
+    return [
+        {
+            "market": market.value,
+            "symbol": symbol,
+            "report_date": report_date,
+            "fiscal_period": str(report_date.year),
+            "roe": roe,
+            "net_income": net_income,
+            "total_equity": total_equity,
+            "revenue": revenue,
+        }
+    ]
+
+
 class YFinanceProvider(MarketDataProvider):
     """Base class for yfinance-backed providers.
 
@@ -252,6 +291,16 @@ class YFinanceProvider(MarketDataProvider):
             if _in_range(date_value, start, end)
         }
         return standardize_splits(market, symbol, filtered, "yfinance")
+
+    def fetch_financials(
+        self,
+        market: MarketTarget,
+        symbol: str,
+    ) -> Sequence[Mapping[str, Any]]:
+        """Fetch and standardize financial metrics for a symbol from yfinance."""
+        self._require_market(market)
+        info = dict(self._ticker(symbol).info)
+        return standardize_financials(market, symbol, info, _report_date(info))
 
 
 class HKYFinanceProvider(YFinanceProvider):
