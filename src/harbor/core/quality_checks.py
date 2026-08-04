@@ -226,3 +226,78 @@ def find_abnormal_moves(
                     )
                 )
     return findings
+
+
+def find_coverage_gaps(
+    market: MarketTarget,
+    expected_symbols: Sequence[str],
+    covered_symbols: Sequence[str],
+) -> list[QualityFinding]:
+    """Detect expected securities that have no daily quotes.
+
+    Args:
+        market: The market the securities belong to.
+        expected_symbols: The securities universe expected to carry quotes.
+        covered_symbols: The symbols that have at least one daily quote.
+
+    Returns:
+        A ``coverage_gap`` finding (severity ``error``) per expected symbol
+        that has no daily quotes.
+    """
+    covered = set(covered_symbols)
+    missing = sorted(set(expected_symbols) - covered)
+    findings: list[QualityFinding] = []
+    for symbol in missing:
+        findings.append(
+            QualityFinding(
+                "coverage_gap",
+                "error",
+                symbol,
+                "No daily quotes found for the security.",
+            )
+        )
+    return findings
+
+
+def find_stale_quotes(
+    market: MarketTarget,
+    rows: Sequence[Mapping[str, Any]],
+    as_of: date,
+    max_age_days: int = 5,
+) -> list[QualityFinding]:
+    """Detect symbols whose latest quote is older than the expected window.
+
+    Args:
+        market: The market the rows belong to.
+        rows: Daily quote rows with ``symbol`` and ``date`` keys.
+        as_of: The reference date the data freshness is measured against.
+        max_age_days: The maximum allowed age, in calendar days, before a
+            symbol's latest quote is considered stale; defaults to 5.
+
+    Returns:
+        A ``stale_quote`` finding (severity ``warning``) per symbol whose
+        latest quote predates ``as_of - max_age_days``.
+    """
+    latest_by_symbol: dict[str, date] = {}
+    for row in rows:
+        symbol = str(row.get("symbol", ""))
+        day = _as_date(row.get("date"))
+        if day is None:
+            continue
+        if day > latest_by_symbol.get(symbol, date.min):
+            latest_by_symbol[symbol] = day
+
+    findings: list[QualityFinding] = []
+    for symbol, latest in sorted(latest_by_symbol.items()):
+        age = (as_of - latest).days
+        if 0 <= age > max_age_days:
+            findings.append(
+                QualityFinding(
+                    "stale_quote",
+                    "warning",
+                    symbol,
+                    f"Latest quote on {latest.isoformat()} is {age} days older "
+                    f"than {as_of.isoformat()}.",
+                )
+            )
+    return findings
