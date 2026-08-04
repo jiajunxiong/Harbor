@@ -7,6 +7,7 @@ Findings reuse the :class:`~harbor.core.validation.QualityFinding` vocabulary
 and are applied identically to Hong Kong (1.86) and United States (1.87) data.
 """
 
+import math
 from collections.abc import Mapping, Sequence
 from datetime import date, timedelta
 from typing import Any
@@ -624,4 +625,172 @@ def find_incomplete_corporate_actions(
                         f"Action {action_id} is missing terms: {', '.join(missing_terms)}.",
                     )
                 )
+    return findings
+
+
+def _close(a: object, b: object, rel_tol: float) -> bool:
+    """Return whether two numeric values agree within a relative tolerance."""
+    if (
+        not isinstance(a, (int, float))
+        or isinstance(a, bool)
+        or not isinstance(b, (int, float))
+        or isinstance(b, bool)
+    ):
+        return False
+    return math.isclose(float(a), float(b), rel_tol=rel_tol)
+
+
+def reconcile_adjusted_factors(
+    market: MarketTarget,
+    computed_rows: Sequence[Mapping[str, Any]],
+    reference_rows: Sequence[Mapping[str, Any]],
+    rel_tol: float = 1e-6,
+) -> list[QualityFinding]:
+    """Reconcile computed adjusted factors against reference values.
+
+    Args:
+        market: The market the rows belong to.
+        computed_rows: Factor rows produced by the calculation.
+        reference_rows: Factor rows from a manual calculation or an
+            authoritative source.
+        rel_tol: The relative tolerance for factor agreement.
+
+    Returns:
+        ``adjusted_factor_mismatch`` findings (severity ``error``) for factor
+        values that disagree, plus ``adjusted_factor_unreconciled`` and
+        ``adjusted_factor_missing`` findings (severity ``warning``) for rows
+        present on only one side.
+    """
+    reference: dict[tuple[str, date], Mapping[str, Any]] = {}
+    for row in reference_rows:
+        symbol = str(row.get("symbol", ""))
+        day = _as_date(row.get("date"))
+        if day is not None:
+            reference[(symbol, day)] = row
+
+    findings: list[QualityFinding] = []
+    for row in computed_rows:
+        symbol = str(row.get("symbol", ""))
+        day = _as_date(row.get("date"))
+        if day is None:
+            continue
+        reference_row = reference.get((symbol, day))
+        if reference_row is None:
+            findings.append(
+                QualityFinding(
+                    "adjusted_factor_unreconciled",
+                    "warning",
+                    symbol,
+                    f"No reference factor for {day.isoformat()}.",
+                )
+            )
+            continue
+        if not _close(
+            row.get("daily_factor"), reference_row.get("daily_factor"), rel_tol
+        ) or not _close(
+            row.get("cumulative_factor"), reference_row.get("cumulative_factor"), rel_tol
+        ):
+            findings.append(
+                QualityFinding(
+                    "adjusted_factor_mismatch",
+                    "error",
+                    symbol,
+                    f"Factor mismatch on {day.isoformat()} (computed "
+                    f"{row.get('cumulative_factor')!r} vs reference "
+                    f"{reference_row.get('cumulative_factor')!r}).",
+                )
+            )
+
+    computed_keys = {
+        (str(row.get("symbol", "")), _as_date(row.get("date"))) for row in computed_rows
+    }
+    for (symbol, day), _ in reference.items():
+        if (symbol, day) not in computed_keys:
+            findings.append(
+                QualityFinding(
+                    "adjusted_factor_missing",
+                    "warning",
+                    symbol,
+                    f"No computed factor for {day.isoformat()}.",
+                )
+            )
+    return findings
+
+
+def reconcile_equity_events(
+    market: MarketTarget,
+    computed_rows: Sequence[Mapping[str, Any]],
+    reference_rows: Sequence[Mapping[str, Any]],
+    rel_tol: float = 1e-6,
+) -> list[QualityFinding]:
+    """Reconcile computed equity entitlements against reference values.
+
+    Args:
+        market: The market the rows belong to.
+        computed_rows: Entitlement rows produced by the calculation.
+        reference_rows: Entitlement rows from a manual calculation or an
+            authoritative source.
+        rel_tol: The relative tolerance for entitlement agreement.
+
+    Returns:
+        ``equity_event_mismatch`` findings (severity ``error``) for entitlements
+        that disagree, plus ``equity_event_unreconciled`` and
+        ``equity_event_missing`` findings (severity ``warning``) for rows
+        present on only one side.
+    """
+    reference: dict[tuple[str, str, date | None], Mapping[str, Any]] = {}
+    for row in reference_rows:
+        key = (
+            str(row.get("symbol", "")),
+            str(row.get("action_id", "")),
+            _as_date(row.get("position_date")),
+        )
+        reference[key] = row
+
+    findings: list[QualityFinding] = []
+    for row in computed_rows:
+        symbol = str(row.get("symbol", ""))
+        action_id = str(row.get("action_id", ""))
+        position_date = _as_date(row.get("position_date"))
+        reference_row = reference.get((symbol, action_id, position_date))
+        if reference_row is None:
+            findings.append(
+                QualityFinding(
+                    "equity_event_unreconciled",
+                    "warning",
+                    symbol,
+                    f"No reference entitlement for action {action_id}.",
+                )
+            )
+            continue
+        if not _close(
+            row.get("entitled_quantity"), reference_row.get("entitled_quantity"), rel_tol
+        ) or not _close(row.get("cash_amount"), reference_row.get("cash_amount"), rel_tol):
+            findings.append(
+                QualityFinding(
+                    "equity_event_mismatch",
+                    "error",
+                    symbol,
+                    f"Entitlement mismatch for action {action_id}.",
+                )
+            )
+
+    computed_keys = {
+        (
+            str(row.get("symbol", "")),
+            str(row.get("action_id", "")),
+            _as_date(row.get("position_date")),
+        )
+        for row in computed_rows
+    }
+    for (symbol, action_id, position_date), _ in reference.items():
+        if (symbol, action_id, position_date) not in computed_keys:
+            findings.append(
+                QualityFinding(
+                    "equity_event_missing",
+                    "warning",
+                    symbol,
+                    f"No computed entitlement for action {action_id}.",
+                )
+            )
     return findings
