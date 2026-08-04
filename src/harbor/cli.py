@@ -4,14 +4,17 @@ import argparse
 import json
 import sys
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from datetime import date, timedelta
 
 from pydantic import ValidationError
 from sqlalchemy import create_engine
 
 from harbor import __version__
 from harbor.config import MarketTarget, Settings
-from harbor.core.ingestion import SecuritiesIngestor
+from harbor.core.ingestion import DailyQuoteIngestor, SecuritiesIngestor
+from harbor.core.interfaces import MarketDataProvider
 from harbor.infrastructure.data_providers.factory import (
     create_provider,
     print_capability_report,
@@ -36,6 +39,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     securities_parser.add_argument(
         "--market", type=MarketTarget, required=True, help="Market to fetch (HK or US)."
+    )
+    daily_parser = fetch_subparsers.add_parser("daily", help="Fetch daily quotes for a symbol.")
+    daily_parser.add_argument(
+        "--market", type=MarketTarget, required=True, help="Market to fetch (HK or US)."
+    )
+    daily_parser.add_argument("--symbol", required=True, help="Security symbol.")
+    daily_parser.add_argument(
+        "--start",
+        type=date.fromisoformat,
+        default=None,
+        help="Start date (ISO), defaults to five years before the end date.",
+    )
+    daily_parser.add_argument(
+        "--end", type=date.fromisoformat, default=None, help="End date (ISO), defaults to today."
     )
     return parser
 
@@ -71,9 +88,18 @@ def _show_fetch(parser: argparse.ArgumentParser, arguments: argparse.Namespace) 
     except ValidationError as error:
         parser.error(f"Invalid configuration: {error}")
         return 2
-    if arguments.fetch_command == "securities":
+    if arguments.fetch_command in ("securities", "daily"):
         try:
-            summary = _fetch_securities(arguments.market, settings)
+            if arguments.fetch_command == "securities":
+                summary = _fetch_securities(arguments.market, settings)
+            else:
+                summary = _fetch_daily(
+                    arguments.market,
+                    settings,
+                    arguments.symbol,
+                    arguments.start,
+                    arguments.end,
+                )
         except (NotImplementedError, ValueError) as error:
             parser.error(f"Fetch failed: {error}")
             return 2
@@ -83,19 +109,56 @@ def _show_fetch(parser: argparse.ArgumentParser, arguments: argparse.Namespace) 
     return 2
 
 
-def _fetch_securities(market: MarketTarget, settings: Settings) -> dict[str, object]:
-    """Fetch and store the securities universe for a market."""
-    provider_name = (
-        settings.data_provider_hk if market is MarketTarget.HK else settings.data_provider_us
-    )
-    provider = create_provider(market, provider_name)
+def _provider_name(market: MarketTarget, settings: Settings) -> str:
+    """Return the configured provider name for a market."""
+    return settings.data_provider_hk if market is MarketTarget.HK else settings.data_provider_us
+
+
+@contextmanager
+def _repository_for(
+    settings: Settings, market: MarketTarget
+) -> Iterator[tuple[Repository, MarketDataProvider, str]]:
+    """Yield a repository, provider, and run id for a market."""
+    provider = create_provider(market, _provider_name(market, settings))
     run_id = uuid.uuid4().hex
     engine = create_engine(settings.database_url)
     with engine.connect() as connection:
-        repository = Repository(connection)
-        ingestor = SecuritiesIngestor(repository, run_id=run_id)
-        count = ingestor.ingest(provider, market)
-    return {"market": market.value, "provider": provider_name, "count": count}
+        yield Repository(connection), provider, run_id
+
+
+def _fetch_securities(market: MarketTarget, settings: Settings) -> dict[str, object]:
+    """Fetch and store the securities universe for a market."""
+    with _repository_for(settings, market) as bundle:
+        repository, provider, run_id = bundle
+        count = SecuritiesIngestor(repository, run_id=run_id).ingest(provider, market)
+    return {
+        "market": market.value,
+        "provider": _provider_name(market, settings),
+        "count": count,
+    }
+
+
+def _fetch_daily(
+    market: MarketTarget,
+    settings: Settings,
+    symbol: str,
+    start: date | None,
+    end: date | None,
+) -> dict[str, object]:
+    """Fetch and store daily quotes for a symbol."""
+    range_end = end if end is not None else date.today()
+    range_start = start if start is not None else range_end - timedelta(days=365 * 5)
+    with _repository_for(settings, market) as bundle:
+        repository, provider, run_id = bundle
+        count = DailyQuoteIngestor(repository, run_id=run_id).ingest(
+            provider, market, symbol, range_start, range_end
+        )
+    return {
+        "market": market.value,
+        "symbol": symbol,
+        "provider": _provider_name(market, settings),
+        "count": count,
+    }
 
 
 def _show_providers() -> int:

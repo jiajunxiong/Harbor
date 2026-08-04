@@ -19,9 +19,14 @@ class RecordingRepository:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, list[Mapping[str, Any]]]] = []
+        self.daily_quotes_calls: list[tuple[str, list[Mapping[str, Any]]]] = []
 
     def upsert_securities(self, market: str, rows: Sequence[Mapping[str, Any]]) -> int:
         self.calls.append((market, list(rows)))
+        return len(rows)
+
+    def upsert_daily_quotes(self, market: str, rows: Sequence[Mapping[str, Any]]) -> int:
+        self.daily_quotes_calls.append((market, list(rows)))
         return len(rows)
 
     def record_raw_payload(
@@ -133,3 +138,79 @@ class FetchSecuritiesCliTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as exit_context:
                 main(["fetch", "securities", "--market", "BOTH"])
         self.assertEqual(exit_context.exception.code, 2)
+
+
+class FetchDailyCliTests(unittest.TestCase):
+    """Verify the fetch daily quotes CLI commands."""
+
+    ENVIRONMENT = {
+        "DATABASE_URL": "postgresql+psycopg://harbor:secret@localhost:5432/harbor",
+        "DATA_PROVIDER_HK": "mock",
+        "DATA_PROVIDER_US": "mock",
+    }
+
+    def test_fetch_daily_hk(self) -> None:
+        fake_repository = RecordingRepository()
+        output = io.StringIO()
+        with (
+            patch.dict(os.environ, self.ENVIRONMENT, clear=True),
+            patch("harbor.cli.Repository", return_value=fake_repository),
+            patch("harbor.cli.create_engine"),
+        ):
+            with redirect_stdout(output), redirect_stderr(io.StringIO()):
+                exit_code = main(
+                    [
+                        "fetch",
+                        "daily",
+                        "--market",
+                        "HK",
+                        "--symbol",
+                        "0700.HK",
+                        "--start",
+                        "2026-01-05",
+                        "--end",
+                        "2026-01-09",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        summary = json.loads(output.getvalue())
+        self.assertEqual(summary["market"], "HK")
+        self.assertEqual(summary["symbol"], "0700.HK")
+        self.assertEqual(summary["provider"], "mock")
+        self.assertGreaterEqual(summary["count"], 1)
+        market, rows = fake_repository.daily_quotes_calls[0]
+        self.assertEqual(market, "HK")
+        self.assertEqual(rows[0]["symbol"], "0700.HK")
+
+    def test_fetch_daily_us(self) -> None:
+        fake_repository = RecordingRepository()
+        output = io.StringIO()
+        with (
+            patch.dict(os.environ, self.ENVIRONMENT, clear=True),
+            patch("harbor.cli.Repository", return_value=fake_repository),
+            patch("harbor.cli.create_engine"),
+        ):
+            with redirect_stdout(output), redirect_stderr(io.StringIO()):
+                exit_code = main(
+                    [
+                        "fetch",
+                        "daily",
+                        "--market",
+                        "US",
+                        "--symbol",
+                        "AAPL",
+                        "--start",
+                        "2026-01-05",
+                        "--end",
+                        "2026-01-09",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        summary = json.loads(output.getvalue())
+        self.assertEqual(summary["market"], "US")
+        self.assertEqual(summary["symbol"], "AAPL")
+        market, rows = fake_repository.daily_quotes_calls[0]
+        self.assertEqual(market, "US")
+        self.assertEqual(rows[0]["symbol"], "AAPL")
