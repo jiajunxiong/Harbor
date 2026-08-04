@@ -21,6 +21,7 @@ from harbor.core.ingestion import (
     SecuritiesIngestor,
 )
 from harbor.core.interfaces import Capability, MarketDataProvider
+from harbor.core.quality_report import render_quality_csv, summarize_quality_issues
 from harbor.infrastructure.data_providers.factory import (
     create_provider,
     print_capability_report,
@@ -75,6 +76,17 @@ def build_parser() -> argparse.ArgumentParser:
     all_parser.add_argument(
         "--end", type=date.fromisoformat, default=None, help="End date (ISO), defaults to today."
     )
+    quality_parser = subparsers.add_parser("quality", help="Inspect data-quality results.")
+    quality_subparsers = quality_parser.add_subparsers(dest="quality_command", required=True)
+    report_parser = quality_subparsers.add_parser(
+        "report", help="Show a data-quality summary for a market."
+    )
+    report_parser.add_argument(
+        "--market", type=MarketTarget, required=True, help="Market to report (HK or US)."
+    )
+    report_parser.add_argument(
+        "--csv", default=None, help="Optional path to export the quality issues as CSV."
+    )
     return parser
 
 
@@ -95,6 +107,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _show_providers()
     if arguments.command == "fetch":
         return _show_fetch(parser, arguments)
+    if arguments.command == "quality":
+        return _show_quality(parser, arguments)
     parser.error(f"Unsupported command: {arguments.command}")
     return 2
 
@@ -232,6 +246,35 @@ def _fetch_all(
         "counts": counts,
         "count": sum(counts.values()),
     }
+
+
+def _show_quality(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """Render a data-quality summary for a market and optionally export CSV."""
+    if arguments.quality_command != "report":
+        parser.error(f"Unsupported quality command: {arguments.quality_command}")
+        return 2
+    if arguments.market not in (MarketTarget.HK, MarketTarget.US):
+        parser.error("--market must be one of: HK, US")
+        return 2
+    try:
+        settings = Settings()  # type: ignore[call-arg]
+    except ValidationError as error:
+        parser.error(f"Invalid configuration: {error}")
+        return 2
+    try:
+        engine = create_engine(settings.database_url)
+        with engine.connect() as connection:
+            repository = Repository(connection)
+            issues = repository.fetch_quality_issues(arguments.market.value)
+        summary = summarize_quality_issues(arguments.market, issues)
+        sys.stdout.write(f"{json.dumps(summary, sort_keys=True)}\n")
+        if arguments.csv is not None:
+            with open(arguments.csv, "w", encoding="utf-8") as handle:
+                handle.write(render_quality_csv(issues))
+        return 0
+    except (OSError, ValueError) as error:
+        parser.error(f"Quality report failed: {error}")
+        return 2
 
 
 def _show_providers() -> int:

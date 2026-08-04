@@ -5,9 +5,12 @@ a JSON summary for the market. The summary reports the finding counts, the
 per-check breakdown, and the stop/continue decision from the quality policy.
 """
 
+import csv
+import io
 import json
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from typing import Any
 
 from harbor.config import MarketTarget
 from harbor.core.quality_policy import QualityThreshold, evaluate_run
@@ -121,3 +124,54 @@ def render_quality_report(
         sort_keys=True,
         indent=2,
     )
+
+
+_CSV_COLUMNS = ("run_id", "market", "symbol", "check_name", "severity", "details", "resolved")
+
+
+def summarize_quality_issues(
+    market: MarketTarget,
+    issues: Sequence[Mapping[str, Any]],
+) -> dict[str, object]:
+    """Summarize materialized quality-issue rows for a market.
+
+    Args:
+        market: The market the issues belong to.
+        issues: Quality-issue rows as returned by
+            :meth:`harbor.storage.repositories.Repository.fetch_quality_issues`.
+
+    Returns:
+        A JSON-serializable summary with finding counts, the unresolved count,
+        the per-check breakdown, and the policy status/action.
+    """
+    findings = [
+        QualityFinding(
+            str(row.get("check_name", "")),
+            str(row.get("severity", "")),
+            str(row["symbol"]) if row.get("symbol") is not None else None,
+            str(row["details"]) if row.get("details") is not None else None,
+        )
+        for row in issues
+    ]
+    decision = evaluate_run(market, findings)
+    by_check = Counter(finding.check_name for finding in findings)
+    return {
+        "market": market.value,
+        "total_findings": len(findings),
+        "errors": sum(1 for finding in findings if finding.severity == "error"),
+        "warnings": sum(1 for finding in findings if finding.severity == "warning"),
+        "unresolved": sum(1 for row in issues if not row.get("resolved", False)),
+        "findings_by_check": dict(sorted(by_check.items())),
+        "status": decision.get("status"),
+        "action": decision.get("action"),
+    }
+
+
+def render_quality_csv(issues: Sequence[Mapping[str, Any]]) -> str:
+    """Render quality-issue rows as CSV text with a header row."""
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=_CSV_COLUMNS)
+    writer.writeheader()
+    for row in issues:
+        writer.writerow({column: row.get(column, "") for column in _CSV_COLUMNS})
+    return buffer.getvalue()

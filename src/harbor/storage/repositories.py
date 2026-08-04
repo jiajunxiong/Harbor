@@ -252,3 +252,9 @@ class Repository:
         if end is not None:
             statement = statement.where(DailyQuote.date <= end)
         return statement
+
+    def fetch_quality_issues(self, market: str) -> list[dict[str, object]]:
+        """Return quality issues for a market as plain dictionaries."""
+        statement = select(QualityIssue).where(QualityIssue.market == market)
+        result = self._connection.execute(statement)
+        return [dict(row) for row in result.mappings()]

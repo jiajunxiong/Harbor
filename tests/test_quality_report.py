@@ -8,7 +8,9 @@ from harbor.core.quality_report import (
     build_quality_summary,
     generate_quality_report,
     persist_quality_issues,
+    render_quality_csv,
     render_quality_report,
+    summarize_quality_issues,
 )
 from harbor.core.validation import QualityFinding
 
@@ -131,3 +133,78 @@ class GenerateQualityReportTests(unittest.TestCase):
             json.loads(text),
             generate_quality_report(repository, MarketTarget.US, "run-3", findings),
         )
+
+
+class SummarizeQualityIssuesTests(unittest.TestCase):
+    """Verify materialized quality-issue summary construction."""
+
+    def test_summary_counts_and_policy_decision(self) -> None:
+        issues = [
+            {
+                "run_id": "run-1",
+                "market": "US",
+                "symbol": "AAPL",
+                "check_name": "daily_quote_duplicate",
+                "severity": "error",
+                "details": "2 records.",
+                "resolved": False,
+            },
+            {
+                "run_id": "run-1",
+                "market": "US",
+                "symbol": "MSFT",
+                "check_name": "daily_quote_gap",
+                "severity": "warning",
+                "details": "Missing 1.",
+                "resolved": True,
+            },
+        ]
+        summary = summarize_quality_issues(MarketTarget.US, issues)
+        self.assertEqual(summary["market"], "US")
+        self.assertEqual(summary["total_findings"], 2)
+        self.assertEqual(summary["errors"], 1)
+        self.assertEqual(summary["warnings"], 1)
+        self.assertEqual(summary["unresolved"], 1)
+        self.assertEqual(
+            summary["findings_by_check"],
+            {"daily_quote_duplicate": 1, "daily_quote_gap": 1},
+        )
+        self.assertEqual(summary["status"], "fail")
+        self.assertEqual(summary["action"], "stop")
+
+    def test_empty_issues_summary(self) -> None:
+        summary = summarize_quality_issues(MarketTarget.HK, [])
+        self.assertEqual(summary["total_findings"], 0)
+        self.assertEqual(summary["status"], "pass")
+        self.assertEqual(summary["action"], "continue")
+
+
+class RenderQualityCsvTests(unittest.TestCase):
+    """Verify CSV rendering of quality issues."""
+
+    def test_csv_has_header_and_row_data(self) -> None:
+        issues = [
+            {
+                "run_id": "run-1",
+                "market": "US",
+                "symbol": "AAPL",
+                "check_name": "stale_quote",
+                "severity": "warning",
+                "details": "5 days.",
+                "resolved": False,
+            }
+        ]
+        text = render_quality_csv(issues)
+        lines = text.strip().splitlines()
+        self.assertEqual(
+            lines[0],
+            "run_id,market,symbol,check_name,severity,details,resolved",
+        )
+        self.assertIn("AAPL", text)
+        self.assertIn("stale_quote", text)
+        self.assertIn("False", text)
+
+    def test_csv_handles_missing_columns(self) -> None:
+        text = render_quality_csv([{"check_name": "coverage_gap"}])
+        self.assertIn("coverage_gap", text)
+        self.assertNotIn("None", text)

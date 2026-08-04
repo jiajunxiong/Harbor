@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import tempfile
 import unittest
 from collections.abc import Mapping, Sequence
 from contextlib import redirect_stderr, redirect_stdout
@@ -288,3 +289,100 @@ class FetchAllCliTests(unittest.TestCase):
         self.assertEqual(fake_repository.dividends_calls[0][0], "US")
         self.assertEqual(fake_repository.financials_calls[0][0], "US")
         self.assertEqual(fake_repository.corporate_actions_calls[0][0], "US")
+
+
+class QualityRepository:
+    """An in-memory stand-in exposing persisted quality issues."""
+
+    def __init__(self, issues: list[dict[str, object]]) -> None:
+        self._issues = issues
+
+    def fetch_quality_issues(self, market: str) -> list[dict[str, object]]:
+        return self._issues
+
+
+class QualityCliTests(unittest.TestCase):
+    """Verify the quality report CLI commands."""
+
+    ENVIRONMENT = {
+        "DATABASE_URL": "postgresql+psycopg://harbor:secret@localhost:5432/harbor",
+        "DATA_PROVIDER_HK": "mock",
+        "DATA_PROVIDER_US": "mock",
+    }
+
+    def test_quality_report_hk_prints_summary(self) -> None:
+        issues = [
+            {
+                "run_id": "run-1",
+                "market": "HK",
+                "symbol": "0700.HK",
+                "check_name": "daily_quote_duplicate",
+                "severity": "error",
+                "details": "2 records.",
+                "resolved": False,
+            },
+            {
+                "run_id": "run-1",
+                "market": "HK",
+                "symbol": "0001.HK",
+                "check_name": "daily_quote_gap",
+                "severity": "warning",
+                "details": "Missing 1.",
+                "resolved": False,
+            },
+        ]
+        fake_repository = QualityRepository(issues)
+        output = io.StringIO()
+        with (
+            patch.dict(os.environ, self.ENVIRONMENT, clear=True),
+            patch("harbor.cli.Repository", return_value=fake_repository),
+            patch("harbor.cli.create_engine"),
+        ):
+            with redirect_stdout(output), redirect_stderr(io.StringIO()):
+                exit_code = main(["quality", "report", "--market", "HK"])
+
+        self.assertEqual(exit_code, 0)
+        summary = json.loads(output.getvalue())
+        self.assertEqual(summary["market"], "HK")
+        self.assertEqual(summary["total_findings"], 2)
+        self.assertEqual(summary["errors"], 1)
+        self.assertEqual(summary["warnings"], 1)
+        self.assertEqual(summary["status"], "fail")
+        self.assertEqual(summary["action"], "stop")
+
+    def test_quality_report_us_exports_csv(self) -> None:
+        issues = [
+            {
+                "run_id": "run-1",
+                "market": "US",
+                "symbol": "AAPL",
+                "check_name": "stale_quote",
+                "severity": "warning",
+                "details": "5 days.",
+                "resolved": False,
+            }
+        ]
+        fake_repository = QualityRepository(issues)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            csv_path = os.path.join(tmp_dir, "issues.csv")
+            output = io.StringIO()
+            with (
+                patch.dict(os.environ, self.ENVIRONMENT, clear=True),
+                patch("harbor.cli.Repository", return_value=fake_repository),
+                patch("harbor.cli.create_engine"),
+            ):
+                with redirect_stdout(output), redirect_stderr(io.StringIO()):
+                    exit_code = main(["quality", "report", "--market", "US", "--csv", csv_path])
+
+            self.assertEqual(exit_code, 0)
+            with open(csv_path, encoding="utf-8") as handle:
+                content = handle.read()
+            self.assertIn("run_id,market,symbol,check_name,severity,details,resolved", content)
+            self.assertIn("AAPL", content)
+            self.assertIn("stale_quote", content)
+
+    def test_quality_report_rejects_unknown_market(self) -> None:
+        with patch.dict(os.environ, self.ENVIRONMENT, clear=True):
+            with self.assertRaises(SystemExit) as exit_context:
+                main(["quality", "report", "--market", "EU"])
+        self.assertEqual(exit_context.exception.code, 2)
