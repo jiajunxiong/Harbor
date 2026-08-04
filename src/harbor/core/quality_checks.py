@@ -301,3 +301,119 @@ def find_stale_quotes(
                 )
             )
     return findings
+
+
+_DIVIDEND_RULES: dict[MarketTarget, tuple[float, float]] = {
+    # (maximum regular per-share amount, minimum special per-share amount)
+    MarketTarget.HK: (3.0, 0.5),
+    MarketTarget.US: (1.5, 0.1),
+}
+
+
+def _date_order_findings(
+    row: Mapping[str, Any],
+    symbol: str,
+) -> list[QualityFinding]:
+    """Flag dividend rows whose dates are out of chronological order."""
+    announce_date = _as_date(row.get("announce_date"))
+    ex_date = _as_date(row.get("ex_date"))
+    record_date = _as_date(row.get("record_date"))
+    payment_date = _as_date(row.get("payment_date"))
+    findings: list[QualityFinding] = []
+    if announce_date is not None and ex_date is not None and ex_date <= announce_date:
+        findings.append(
+            QualityFinding(
+                "dividend_date_invalid",
+                "error",
+                symbol,
+                "Ex-date must be after the announcement date.",
+            )
+        )
+    if ex_date is not None and record_date is not None and record_date < ex_date:
+        findings.append(
+            QualityFinding(
+                "dividend_date_invalid",
+                "error",
+                symbol,
+                "Record date must not be before the ex-date.",
+            )
+        )
+    if ex_date is not None and payment_date is not None and payment_date < ex_date:
+        findings.append(
+            QualityFinding(
+                "dividend_date_invalid",
+                "error",
+                symbol,
+                "Payment date must not be before the ex-date.",
+            )
+        )
+    if record_date is not None and payment_date is not None and payment_date < record_date:
+        findings.append(
+            QualityFinding(
+                "dividend_date_invalid",
+                "error",
+                symbol,
+                "Payment date must not be before the record date.",
+            )
+        )
+    return findings
+
+
+def find_inconsistent_dividends(
+    market: MarketTarget,
+    rows: Sequence[Mapping[str, Any]],
+) -> list[QualityFinding]:
+    """Detect inconsistent dividend timing, amounts, and special flags.
+
+    Args:
+        market: The market the rows belong to.
+        rows: Dividend rows with ``ex_date``, ``record_date``, ``payment_date``,
+            ``amount``, and ``type`` keys.
+
+    Returns:
+        ``dividend_amount_invalid`` and ``dividend_date_invalid`` findings
+        (severity ``error``) for non-positive amounts and out-of-order dates,
+        plus ``special_flag_unreasonable`` findings (severity ``warning``) when
+        a special dividend is too small or a regular dividend is too large for
+        the market's rules.
+    """
+    regular_max, special_min = _DIVIDEND_RULES[market]
+    findings: list[QualityFinding] = []
+    for row in rows:
+        symbol = str(row.get("symbol", ""))
+        amount = row.get("amount")
+        if not isinstance(amount, (int, float)) or isinstance(amount, bool):
+            continue
+        if amount <= 0:
+            findings.append(
+                QualityFinding(
+                    "dividend_amount_invalid",
+                    "error",
+                    symbol,
+                    "Dividend amount must be positive.",
+                )
+            )
+            continue
+        findings.extend(_date_order_findings(row, symbol))
+        dividend_type = row.get("type")
+        if dividend_type == "special" and amount < special_min:
+            findings.append(
+                QualityFinding(
+                    "special_flag_unreasonable",
+                    "warning",
+                    symbol,
+                    f"Special dividend amount {amount:g} is below the "
+                    f"{market.value} minimum {special_min:g}.",
+                )
+            )
+        elif dividend_type == "regular" and amount > regular_max:
+            findings.append(
+                QualityFinding(
+                    "special_flag_unreasonable",
+                    "warning",
+                    symbol,
+                    f"Regular dividend amount {amount:g} exceeds the "
+                    f"{market.value} ceiling {regular_max:g}; possibly a special dividend.",
+                )
+            )
+    return findings
