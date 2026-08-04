@@ -2,11 +2,27 @@
 
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 from harbor.config import MarketTarget
 from harbor.core.interfaces import MarketDataProvider
 from harbor.storage.repositories import Repository
+
+
+def _json_safe(value: object) -> object:
+    """Convert a value to a JSON-serializable form for raw payload storage."""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, Mapping):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
 
 
 def _store_raw_payload(
@@ -24,7 +40,7 @@ def _store_raw_payload(
         market.value,
         run_id,
         endpoint,
-        {"rows": [dict(row) for row in rows]},
+        {"rows": [_json_safe(dict(row)) for row in rows]},
         datetime.now(timezone.utc),
         symbol=symbol,
     )

@@ -24,6 +24,13 @@ class RecordingRepository:
         self.dividends_calls: list[tuple[str, list[Mapping[str, Any]]]] = []
         self.financials_calls: list[tuple[str, list[Mapping[str, Any]]]] = []
         self.corporate_actions_calls: list[tuple[str, list[Mapping[str, Any]]]] = []
+        self.ingestion_runs_calls: list[tuple[str, str]] = []
+
+    def create_ingestion_run(
+        self, market: str, run_id: str, source: str, start_time: datetime
+    ) -> int:
+        self.ingestion_runs_calls.append((market, run_id))
+        return 1
 
     def upsert_securities(self, market: str, rows: Sequence[Mapping[str, Any]]) -> int:
         self.calls.append((market, list(rows)))

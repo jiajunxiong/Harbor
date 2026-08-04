@@ -63,12 +63,18 @@ class Repository:
         )
 
     def _upsert(self, model: type[Base], rows: Sequence[Mapping[str, Any]]) -> int:
-        """Execute an idempotent upsert and return the number of inserted rows."""
+        """Execute an idempotent upsert and return the number of inserted rows.
+
+        ``ON CONFLICT DO NOTHING`` does not report a reliable row count, so the
+        primary keys of the actually-inserted rows are captured via ``RETURNING``
+        and counted.
+        """
         statement = self._upsert_statement(model, rows)
         if statement is None:
             return 0
-        result = self._connection.execute(statement)
-        return result.rowcount or 0
+        table = self._table(model)
+        result = self._connection.execute(statement.returning(*table.primary_key.columns))
+        return len(result.fetchall())
 
     def _insert_statement(
         self,
@@ -273,3 +279,47 @@ class Repository:
         statement = self._quality_issues_statement(market, run_id)
         result = self._connection.execute(statement)
         return [dict(row) for row in result.mappings()]
+
+    def list_corporate_actions(
+        self,
+        market: str,
+        symbol: str | None = None,
+    ) -> Select[Any]:
+        """Return a market-scoped corporate actions query with a symbol filter."""
+        statement = select(CorporateAction).where(CorporateAction.market == market)
+        if symbol is not None:
+            statement = statement.where(CorporateAction.symbol == symbol)
+        return statement
+
+    def list_dividends(
+        self,
+        market: str,
+        symbol: str | None = None,
+    ) -> Select[Any]:
+        """Return a market-scoped dividends query with a symbol filter."""
+        statement = select(Dividend).where(Dividend.market == market)
+        if symbol is not None:
+            statement = statement.where(Dividend.symbol == symbol)
+        return statement
+
+    def list_financials(
+        self,
+        market: str,
+        symbol: str | None = None,
+    ) -> Select[Any]:
+        """Return a market-scoped financials query with a symbol filter."""
+        statement = select(Financial).where(Financial.market == market)
+        if symbol is not None:
+            statement = statement.where(Financial.symbol == symbol)
+        return statement
+
+    def list_positions(
+        self,
+        market: str,
+        symbol: str | None = None,
+    ) -> Select[Any]:
+        """Return a market-scoped positions query with a symbol filter."""
+        statement = select(Position).where(Position.market == market)
+        if symbol is not None:
+            statement = statement.where(Position.symbol == symbol)
+        return statement

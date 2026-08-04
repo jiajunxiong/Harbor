@@ -6,7 +6,7 @@ import sys
 import uuid
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from pydantic import ValidationError
 from sqlalchemy import create_engine
@@ -155,12 +155,23 @@ def _provider_name(market: MarketTarget, settings: Settings) -> str:
 def _repository_for(
     settings: Settings, market: MarketTarget
 ) -> Iterator[tuple[Repository, MarketDataProvider, str]]:
-    """Yield a repository, provider, and run id for a market."""
+    """Yield a repository, provider, and run id for a market.
+
+    The ingestion run is created before any data is written so that raw
+    payloads can reference it, and the connection commits on success.
+    """
     provider = create_provider(market, _provider_name(market, settings))
     run_id = uuid.uuid4().hex
     engine = create_engine(settings.database_url)
-    with engine.connect() as connection:
-        yield Repository(connection), provider, run_id
+    with engine.begin() as connection:
+        repository = Repository(connection)
+        repository.create_ingestion_run(
+            market.value,
+            run_id,
+            _provider_name(market, settings),
+            datetime.now(timezone.utc),
+        )
+        yield repository, provider, run_id
 
 
 def _fetch_securities(market: MarketTarget, settings: Settings) -> dict[str, object]:

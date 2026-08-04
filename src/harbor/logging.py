@@ -59,6 +59,7 @@ def configure_logging(
     logger = logging.getLogger("harbor")
     logger.handlers.clear()
     logger.setLevel(level_number)
+    logger.disabled = False
     logger.propagate = False
 
     handler = logging.StreamHandler(stream)
