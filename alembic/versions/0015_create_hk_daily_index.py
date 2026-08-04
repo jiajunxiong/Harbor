@@ -1,6 +1,6 @@
 """Create Hong Kong market daily quotes composite index.
 
-Revision ID: 0015_create_hk_daily_quotes_index
+Revision ID: 0015_create_hk_daily_index
 Revises: 0014_create_quality_summary_us
 Create Date: 2026-08-03
 """
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "0015_create_hk_daily_quotes_index"
+revision: str = "0015_create_hk_daily_index"
 down_revision: str | Sequence[str] | None = "0014_create_quality_summary_us"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
