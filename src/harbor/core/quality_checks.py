@@ -123,3 +123,106 @@ def check_daily_quotes(
 ) -> list[QualityFinding]:
     """Run the duplicate and gap checks over a daily quote batch."""
     return find_duplicate_daily_quotes(market, rows) + find_daily_quote_gaps(market, rows)
+
+
+def _to_float(value: object) -> float | None:
+    """Return a value as a float, or ``None`` when it is not numeric."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    return float(value)
+
+
+def _ohlc_numbers(row: Mapping[str, Any]) -> tuple[float, float, float, float] | None:
+    """Return the open/high/low/close as floats when all are numeric."""
+    open_price = _to_float(row.get("open"))
+    high = _to_float(row.get("high"))
+    low = _to_float(row.get("low"))
+    close = _to_float(row.get("close"))
+    if open_price is None or high is None or low is None or close is None:
+        return None
+    return open_price, high, low, close
+
+
+def find_illegal_ohlc(
+    market: MarketTarget,
+    rows: Sequence[Mapping[str, Any]],
+) -> list[QualityFinding]:
+    """Detect rows whose OHLC prices are internally inconsistent.
+
+    Args:
+        market: The market the rows belong to.
+        rows: Daily quote rows with ``symbol`` and OHLC keys.
+
+    Returns:
+        ``ohlc_invalid`` findings (severity ``error``) for rows where ``high``
+        is below ``low``, an extreme lies outside the open/close range, or any
+        price is non-positive.
+    """
+    findings: list[QualityFinding] = []
+    for row in rows:
+        symbol = str(row.get("symbol", ""))
+        prices = _ohlc_numbers(row)
+        if prices is None:
+            continue
+        open_price, high, low, close = prices
+        if high < low:
+            findings.append(QualityFinding("ohlc_invalid", "error", symbol, "high is below low."))
+        if high < open_price or high < close:
+            findings.append(
+                QualityFinding("ohlc_invalid", "error", symbol, "high is below open or close.")
+            )
+        if low > open_price or low > close:
+            findings.append(
+                QualityFinding("ohlc_invalid", "error", symbol, "low is above open or close.")
+            )
+        if min(open_price, high, low, close) <= 0:
+            findings.append(
+                QualityFinding("ohlc_invalid", "error", symbol, "OHLC prices must be positive.")
+            )
+    return findings
+
+
+def find_abnormal_moves(
+    market: MarketTarget,
+    rows: Sequence[Mapping[str, Any]],
+    threshold: float = 0.5,
+) -> list[QualityFinding]:
+    """Detect single-day close-to-close moves at or beyond a threshold.
+
+    Args:
+        market: The market the rows belong to.
+        rows: Daily quote rows with ``symbol``, ``date``, and ``close`` keys.
+        threshold: The absolute daily move (as a fraction) that is considered
+            abnormal; defaults to ``0.5`` (50%).
+
+    Returns:
+        ``abnormal_price_move`` findings (severity ``warning``) for each
+        consecutive close-to-close move whose magnitude reaches the threshold.
+    """
+    by_symbol: dict[str, list[tuple[date, float]]] = {}
+    for row in rows:
+        symbol = str(row.get("symbol", ""))
+        day = _as_date(row.get("date"))
+        close = row.get("close")
+        if day is None or not isinstance(close, (int, float)) or isinstance(close, bool):
+            continue
+        by_symbol.setdefault(symbol, []).append((day, float(close)))
+
+    findings: list[QualityFinding] = []
+    for symbol, quotes in sorted(by_symbol.items()):
+        quotes.sort(key=lambda item: item[0])
+        for (_, previous), (day, close) in zip(quotes, quotes[1:]):
+            if previous <= 0:
+                continue
+            move = abs(close / previous - 1.0)
+            if move >= threshold:
+                findings.append(
+                    QualityFinding(
+                        "abnormal_price_move",
+                        "warning",
+                        symbol,
+                        f"{move * 100.0:.1f}% move on {day.isoformat()} "
+                        f"(close {close:g} vs {previous:g}).",
+                    )
+                )
+    return findings
