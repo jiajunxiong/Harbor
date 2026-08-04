@@ -417,3 +417,96 @@ def find_inconsistent_dividends(
                 )
             )
     return findings
+
+
+_KEY_METRICS = ("roe", "net_income", "total_equity", "revenue")
+
+
+def find_incomplete_financials(
+    market: MarketTarget,
+    rows: Sequence[Mapping[str, Any]],
+) -> list[QualityFinding]:
+    """Detect financial rows missing key metric fields.
+
+    Args:
+        market: The market the rows belong to.
+        rows: Financial rows with ``symbol`` and the key metric keys.
+
+    Returns:
+        A ``financials_incomplete`` finding per row that is missing at least one
+        key metric: severity ``error`` when all metrics are missing, otherwise
+        ``warning`` listing the missing fields.
+    """
+    findings: list[QualityFinding] = []
+    for row in rows:
+        symbol = str(row.get("symbol", ""))
+        missing = [field for field in _KEY_METRICS if row.get(field) is None]
+        if not missing:
+            continue
+        if len(missing) == len(_KEY_METRICS):
+            findings.append(
+                QualityFinding(
+                    "financials_incomplete",
+                    "error",
+                    symbol,
+                    "All key metrics are missing.",
+                )
+            )
+        else:
+            findings.append(
+                QualityFinding(
+                    "financials_incomplete",
+                    "warning",
+                    symbol,
+                    f"Missing metrics: {', '.join(missing)}.",
+                )
+            )
+    return findings
+
+
+def find_unreasonable_report_dates(
+    market: MarketTarget,
+    rows: Sequence[Mapping[str, Any]],
+    as_of: date | None = None,
+) -> list[QualityFinding]:
+    """Detect financial rows with implausible report dates.
+
+    Args:
+        market: The market the rows belong to.
+        rows: Financial rows with ``report_date`` and ``fiscal_period`` keys.
+        as_of: The reference date; defaults to today. Report dates after this
+            date are considered future-dated.
+
+    Returns:
+        A ``report_date_unreasonable`` finding (severity ``warning``) per row
+        whose report date is in the future or whose fiscal period does not match
+        the report year.
+    """
+    reference = as_of if as_of is not None else date.today()
+    findings: list[QualityFinding] = []
+    for row in rows:
+        symbol = str(row.get("symbol", ""))
+        report_date = _as_date(row.get("report_date"))
+        if report_date is None:
+            continue
+        if report_date > reference:
+            findings.append(
+                QualityFinding(
+                    "report_date_unreasonable",
+                    "warning",
+                    symbol,
+                    f"Report date {report_date.isoformat()} is in the future.",
+                )
+            )
+        fiscal_period = row.get("fiscal_period")
+        if fiscal_period is not None and str(fiscal_period) != str(report_date.year):
+            findings.append(
+                QualityFinding(
+                    "report_date_unreasonable",
+                    "warning",
+                    symbol,
+                    f"Fiscal period {fiscal_period!r} does not match report "
+                    f"year {report_date.year}.",
+                )
+            )
+    return findings
