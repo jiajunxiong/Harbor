@@ -12,6 +12,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from harbor.config import MarketTarget
+from harbor.core.market_registry import CorporateActionType
 from harbor.core.validation import QualityFinding
 
 
@@ -509,4 +510,118 @@ def find_unreasonable_report_dates(
                     f"year {report_date.year}.",
                 )
             )
+    return findings
+
+
+_LIFECYCLE_DATES = ("announce_date", "ex_date", "record_date", "effective_date")
+_RATIO_ACTIONS = frozenset(
+    {
+        CorporateActionType.SPLIT,
+        CorporateActionType.CONSOLIDATION,
+        CorporateActionType.RIGHTS_ISSUE,
+        CorporateActionType.MERGER,
+        CorporateActionType.SPIN_OFF,
+    }
+)
+_PRICE_ACTIONS = frozenset({CorporateActionType.DIVIDEND, CorporateActionType.TENDER_OFFER})
+
+
+def _corporate_action_terms(
+    action_type: CorporateActionType,
+    row: Mapping[str, Any],
+) -> list[str]:
+    """Return the term names an action requires but the row lacks."""
+    missing: list[str] = []
+    ratio = _to_float(row.get("ratio"))
+    if action_type in _RATIO_ACTIONS and (ratio is None or ratio <= 0):
+        missing.append("ratio")
+    price = _to_float(row.get("price"))
+    if action_type is CorporateActionType.RIGHTS_ISSUE and price is None:
+        missing.append("price")
+    if action_type in _PRICE_ACTIONS and price is None:
+        missing.append("price")
+    return missing
+
+
+def find_incomplete_corporate_actions(
+    market: MarketTarget,
+    rows: Sequence[Mapping[str, Any]],
+) -> list[QualityFinding]:
+    """Detect corporate actions with incomplete lifecycles or terms.
+
+    Args:
+        market: The market the rows belong to.
+        rows: Corporate action rows with lifecycle date keys, ``action_type``,
+            ``ratio``, and ``price`` keys.
+
+    Returns:
+        ``corporate_action_date_missing`` and ``corporate_action_terms_incomplete``
+        findings (severity ``warning``) for absent dates/terms, plus
+        ``corporate_action_date_order`` findings (severity ``error``) when the
+        lifecycle dates are out of order.
+    """
+    findings: list[QualityFinding] = []
+    for row in rows:
+        symbol = str(row.get("symbol", ""))
+        action_id = str(row.get("action_id", ""))
+
+        missing_dates = [field for field in _LIFECYCLE_DATES if _as_date(row.get(field)) is None]
+        if missing_dates:
+            findings.append(
+                QualityFinding(
+                    "corporate_action_date_missing",
+                    "warning",
+                    symbol,
+                    f"Action {action_id} is missing dates: {', '.join(missing_dates)}.",
+                )
+            )
+
+        announce_date = _as_date(row.get("announce_date"))
+        ex_date = _as_date(row.get("ex_date"))
+        record_date = _as_date(row.get("record_date"))
+        effective_date = _as_date(row.get("effective_date"))
+        if announce_date is not None and ex_date is not None and ex_date < announce_date:
+            findings.append(
+                QualityFinding(
+                    "corporate_action_date_order",
+                    "error",
+                    symbol,
+                    f"Action {action_id}: ex-date is before the announcement date.",
+                )
+            )
+        if ex_date is not None and record_date is not None and record_date < ex_date:
+            findings.append(
+                QualityFinding(
+                    "corporate_action_date_order",
+                    "error",
+                    symbol,
+                    f"Action {action_id}: record date is before the ex-date.",
+                )
+            )
+        if record_date is not None and effective_date is not None and effective_date < record_date:
+            findings.append(
+                QualityFinding(
+                    "corporate_action_date_order",
+                    "error",
+                    symbol,
+                    f"Action {action_id}: effective date is before the record date.",
+                )
+            )
+
+        action_type_value = row.get("action_type")
+        if isinstance(action_type_value, str):
+            try:
+                action_type = CorporateActionType(action_type_value)
+            except ValueError:
+                continue
+            missing_terms = _corporate_action_terms(action_type, row)
+            if missing_terms:
+                findings.append(
+                    QualityFinding(
+                        "corporate_action_terms_incomplete",
+                        "warning",
+                        symbol,
+                        f"Action {action_id} is missing terms: {', '.join(missing_terms)}.",
+                    )
+                )
     return findings
