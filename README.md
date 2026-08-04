@@ -199,34 +199,112 @@ git clone https://github.com/your-username/harbor.git
 cd harbor
 ```
 
-### 2. 配置环境变量
+### 2. 创建虚拟环境并配置环境变量
 
 ```bash
+# 创建并激活虚拟环境，安装项目（含 harbor-cli 入口）
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
+
+# 从模板生成本地配置
 cp .env.example .env
 # 编辑 .env 文件，设置数据源、数据库密码、目标市场（HK/US/BOTH）等
 ```
 
+> 后续所有 `alembic` / `harbor-cli` 命令都需要在已激活的虚拟环境中执行（提示符出现 `(.venv)`）。
+
 ### 3. 启动基础服务
 
 ```bash
-docker-compose up -d postgres redis
+docker compose up -d postgres redis
 ```
 
-### 4. 运行数据采集（MVP 1）
+### 4. 初始化数据库（应用迁移）
 
 ```bash
-# 港股
-docker-compose run --rm harbor-data python fetch_daily.py --market HK
+# alembic 读取 DATABASE_URL 环境变量（不会自动读取 .env），先加载到当前 shell
+set -a && source .env && set +a
 
-# 美股
-docker-compose run --rm harbor-data python fetch_daily.py --market US
+# 应用数据库迁移
+alembic upgrade head
 ```
 
-### 5. 验证数据入库
+### 5. 运行数据采集（MVP 1，双市场）
 
 ```bash
-docker-compose exec postgres psql -U harbor -d harbor -c "SELECT market, COUNT(*) FROM daily_quotes GROUP BY market;"
+# 港股：全量采集（标的 + 日线 + 股息 + 基本面 + 企业行动）
+harbor-cli fetch all --market HK
+
+# 美股：全量采集
+harbor-cli fetch all --market US
+
+# 仅采集标的列表
+harbor-cli fetch securities --market HK
+harbor-cli fetch securities --market US
+
+# 采集单只标的的日线
+harbor-cli fetch daily --market HK --symbol 0700.HK
+harbor-cli fetch daily --market US --symbol AAPL
 ```
+
+### 6. 数据质量报告
+
+```bash
+# 查看港股数据质量摘要（可选导出 CSV）
+harbor-cli quality report --market HK
+harbor-cli quality report --market US --csv issues.csv
+
+# 查看当前配置与数据源能力
+harbor-cli config
+harbor-cli providers
+```
+
+### 7. 验证数据入库
+
+```bash
+docker compose exec postgres psql -U harbor -d harbor -c "SELECT market, COUNT(*) FROM daily_quotes GROUP BY market;"
+```
+
+---
+
+## 🌏 双市场运行方式
+
+Harbor 在同一个数据库中通过 `market` 字段（`HK` / `US`）严格隔离港股与美股数据，所有采集与校验都按市场独立执行。
+
+### 独立数据源配置
+
+| 环境变量 | 作用 | 可选值 |
+| :--- | :--- | :--- |
+| `DATA_PROVIDER_HK` | 港股数据源 | `mock`、`yfinance`、`akshare` |
+| `DATA_PROVIDER_US` | 美股数据源 | `mock`、`yfinance` |
+| `MARKET_TARGET` | 目标市场 | `HK`、`US`、`BOTH` |
+
+港股与美股可同时使用不同数据源，例如 `.env` 中：
+
+```dotenv
+DATA_PROVIDER_HK=akshare
+DATA_PROVIDER_US=yfinance
+```
+
+### 常用命令（按市场）
+
+```bash
+# 港股：全量采集 + 质量报告
+harbor-cli fetch all --market HK
+harbor-cli quality report --market HK
+
+# 美股：全量采集 + 质量报告 + CSV 导出
+harbor-cli fetch all --market US
+harbor-cli quality report --market US --csv issues.csv
+```
+
+### 两地规则差异
+
+企业行动与数据格式按市场分别校验，不混用统一逻辑：
+
+- **港股**：支持供股（`rights_issue`）、合股（`consolidation`）、要约（`tender_offer`）、股息（`dividend`）；股票代码形如 `0700.HK`；股息币种为 `HKD`。
+- **美股**：支持拆股（`split`）、并购（`merger`）、分拆（`spin_off`）、股息（`dividend`）；股票代码为纯大写代码（如 `AAPL`）；股息币种为 `USD`。
 
 ---
 
@@ -234,13 +312,41 @@ docker-compose exec postgres psql -U harbor -d harbor -c "SELECT market, COUNT(*
 
 | MVP 阶段 | 状态 | 预计完成 |
 | :--- | :--- | :--- |
-| MVP 1：数据基础 | 🚧 开发中 | 2026年8月 |
+| MVP 1：数据基础 | ✅ 已完成 | 2026年8月 |
 | MVP 2：研究回测 | 📋 规划中 | — |
 | MVP 3：样本外验证 | 📋 规划中 | — |
 | MVP 4：模拟盘闭环 | 📋 规划中 | — |
 | MVP 5：实盘评估 | 📋 规划中 | — |
 
-> 项目处于规划与 MVP 1（数据基础）阶段，尚未提供可用于实盘交易的策略或基础设施。
+> MVP 1（数据基础）已完成：港股与美股数据的采集、标准化、质量校验、复权因子与权益计算均已落地并通过自动化测试。MVP 1 尚未提供可用于实盘交易的策略或基础设施。
+
+---
+
+## ⚠️ 已知限制
+
+- **数据源依赖**：`yfinance` / `akshare` 需要外网访问，且免费接口存在限流，可能影响大批量采集的时效性；`mock` 数据源仅用于开发与测试，不含真实行情。
+- **交易日历简化**：复权因子、缺口检查等按“周一到周五”近似交易日，尚未纳入交易所休市日历（如港股与美股各自的节假日），长假后可能出现非真实的“缺口”告警。
+- **企业行动条款**：复权与权益计算依赖事件条款（`ratio`/`price`）；部分数据源（如 `mock`）不提供条款，缺失条款的事件会进入复核队列（JSON 报告）而非被静默忽略。
+- **权益计算模型**：使用持仓快照日期与登记日（`record_date`）判断资格，未建模同一快照区间内的买卖变动，可能与券商实际到账存在差异。
+- **实盘/高频**：MVP 1 仅覆盖数据采集与质量基础，不含实盘交易、高频策略或收益保证；回测结果不代表未来表现。
+
+---
+
+## 🔧 故障排查
+
+| 现象 | 可能原因 | 处理方式 |
+| :--- | :--- | :--- |
+| `harbor-cli fetch ...` 数据库连接失败 | `DATABASE_URL` 端口或凭据不正确；Postgres 未启动 | 确认 `docker compose up -d postgres`；核对 `.env` 中 `DATABASE_URL` 与 `POSTGRES_PORT` 一致 |
+| 提示“表不存在” | 尚未执行数据库迁移 | 运行 `alembic upgrade head` |
+| `alembic upgrade head` 报 `value too long for character varying(32)` | 迁移版本号超过 32 字符 | 保持迁移 `revision` 长度 ≤ 32；当前迁移链已满足 |
+| 采集报 `raw_payloads` 外键错误 | 未先创建 `ingestion_runs` 记录 | 使用 `harbor-cli fetch`（内部会先创建 run），避免直接调用 ingestor |
+| 写入后查询为空 | 连接未提交 | 确保使用事务（`engine.begin()`）或执行完整 CLI 命令后再查询 |
+| `quality report` 无输出 | 该市场尚无 `quality_issues` 记录 | 先运行一次采集/质量检查，再查看报告 |
+| 质量报告显示大量缺口 | 数据源覆盖不全或长假 | 结合“已知限制”中的交易日历简化说明判断，必要时扩大数据范围 |
+| 找不到 `harbor-cli` | 未安装项目或未激活虚拟环境 | 执行 `pip install -e .` 后使用 `.venv/bin/harbor-cli` |
+| `Command 'alembic' not found` | 虚拟环境未激活 | 先 `source .venv/bin/activate`（或直接使用 `.venv/bin/alembic`） |
+| alembic 提示 `Set DATABASE_URL` | alembic 不读取 `.env` 文件 | 先执行 `set -a && source .env && set +a`，再运行迁移 |
+| `connection refused` / `Is the server running...` | Postgres 容器未启动或端口不一致 | 运行 `docker compose up -d postgres`；核对 `.env` 中 `POSTGRES_PORT` 与 `DATABASE_URL` 一致 |
 
 ---
 
