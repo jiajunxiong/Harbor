@@ -13,8 +13,14 @@ from sqlalchemy import create_engine
 
 from harbor import __version__
 from harbor.config import MarketTarget, Settings
-from harbor.core.ingestion import DailyQuoteIngestor, SecuritiesIngestor
-from harbor.core.interfaces import MarketDataProvider
+from harbor.core.ingestion import (
+    CorporateActionIngestor,
+    DailyQuoteIngestor,
+    DividendIngestor,
+    FinancialIngestor,
+    SecuritiesIngestor,
+)
+from harbor.core.interfaces import Capability, MarketDataProvider
 from harbor.infrastructure.data_providers.factory import (
     create_provider,
     print_capability_report,
@@ -54,6 +60,21 @@ def build_parser() -> argparse.ArgumentParser:
     daily_parser.add_argument(
         "--end", type=date.fromisoformat, default=None, help="End date (ISO), defaults to today."
     )
+    all_parser = fetch_subparsers.add_parser(
+        "all", help="Fetch every supported dataset for a market."
+    )
+    all_parser.add_argument(
+        "--market", type=MarketTarget, required=True, help="Market to fetch (HK or US)."
+    )
+    all_parser.add_argument(
+        "--start",
+        type=date.fromisoformat,
+        default=None,
+        help="Start date (ISO), defaults to five years before the end date.",
+    )
+    all_parser.add_argument(
+        "--end", type=date.fromisoformat, default=None, help="End date (ISO), defaults to today."
+    )
     return parser
 
 
@@ -88,11 +109,11 @@ def _show_fetch(parser: argparse.ArgumentParser, arguments: argparse.Namespace) 
     except ValidationError as error:
         parser.error(f"Invalid configuration: {error}")
         return 2
-    if arguments.fetch_command in ("securities", "daily"):
+    if arguments.fetch_command in ("securities", "daily", "all"):
         try:
             if arguments.fetch_command == "securities":
                 summary = _fetch_securities(arguments.market, settings)
-            else:
+            elif arguments.fetch_command == "daily":
                 summary = _fetch_daily(
                     arguments.market,
                     settings,
@@ -100,6 +121,8 @@ def _show_fetch(parser: argparse.ArgumentParser, arguments: argparse.Namespace) 
                     arguments.start,
                     arguments.end,
                 )
+            else:
+                summary = _fetch_all(arguments.market, settings, arguments.start, arguments.end)
         except (NotImplementedError, ValueError) as error:
             parser.error(f"Fetch failed: {error}")
             return 2
@@ -158,6 +181,56 @@ def _fetch_daily(
         "symbol": symbol,
         "provider": _provider_name(market, settings),
         "count": count,
+    }
+
+
+def _fetch_all(
+    market: MarketTarget,
+    settings: Settings,
+    start: date | None,
+    end: date | None,
+) -> dict[str, object]:
+    """Fetch every supported dataset for a market.
+
+    The securities universe is ingested first, then each per-symbol dataset
+    (daily quotes, dividends, financials, corporate actions) is ingested for
+    every listed security, gated on the provider's declared capabilities.
+    """
+    range_end = end if end is not None else date.today()
+    range_start = start if start is not None else range_end - timedelta(days=365 * 5)
+    with _repository_for(settings, market) as bundle:
+        repository, provider, run_id = bundle
+        capabilities = provider.capabilities()
+        symbols = [str(row["symbol"]) for row in provider.list_securities(market)]
+        counts: dict[str, int] = {
+            "securities": SecuritiesIngestor(repository, run_id=run_id).ingest(provider, market)
+        }
+        for symbol in symbols:
+            if capabilities.supports(market, Capability.DAILY_QUOTES):
+                ingested = DailyQuoteIngestor(repository, run_id=run_id).ingest(
+                    provider, market, symbol, range_start, range_end
+                )
+                counts["daily_quotes"] = counts.get("daily_quotes", 0) + ingested
+            if capabilities.supports(market, Capability.DIVIDENDS):
+                ingested = DividendIngestor(repository, run_id=run_id).ingest(
+                    provider, market, symbol, range_start, range_end
+                )
+                counts["dividends"] = counts.get("dividends", 0) + ingested
+            if capabilities.supports(market, Capability.FUNDAMENTALS):
+                ingested = FinancialIngestor(repository, run_id=run_id).ingest(
+                    provider, market, symbol
+                )
+                counts["financials"] = counts.get("financials", 0) + ingested
+            if capabilities.supports(market, Capability.CORPORATE_ACTIONS):
+                ingested = CorporateActionIngestor(repository, run_id=run_id).ingest(
+                    provider, market, symbol, range_start, range_end
+                )
+                counts["corporate_actions"] = counts.get("corporate_actions", 0) + ingested
+    return {
+        "market": market.value,
+        "provider": _provider_name(market, settings),
+        "counts": counts,
+        "count": sum(counts.values()),
     }
 
 

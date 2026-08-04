@@ -20,6 +20,9 @@ class RecordingRepository:
     def __init__(self) -> None:
         self.calls: list[tuple[str, list[Mapping[str, Any]]]] = []
         self.daily_quotes_calls: list[tuple[str, list[Mapping[str, Any]]]] = []
+        self.dividends_calls: list[tuple[str, list[Mapping[str, Any]]]] = []
+        self.financials_calls: list[tuple[str, list[Mapping[str, Any]]]] = []
+        self.corporate_actions_calls: list[tuple[str, list[Mapping[str, Any]]]] = []
 
     def upsert_securities(self, market: str, rows: Sequence[Mapping[str, Any]]) -> int:
         self.calls.append((market, list(rows)))
@@ -27,6 +30,18 @@ class RecordingRepository:
 
     def upsert_daily_quotes(self, market: str, rows: Sequence[Mapping[str, Any]]) -> int:
         self.daily_quotes_calls.append((market, list(rows)))
+        return len(rows)
+
+    def upsert_dividends(self, market: str, rows: Sequence[Mapping[str, Any]]) -> int:
+        self.dividends_calls.append((market, list(rows)))
+        return len(rows)
+
+    def upsert_financials(self, market: str, rows: Sequence[Mapping[str, Any]]) -> int:
+        self.financials_calls.append((market, list(rows)))
+        return len(rows)
+
+    def upsert_corporate_actions(self, market: str, rows: Sequence[Mapping[str, Any]]) -> int:
+        self.corporate_actions_calls.append((market, list(rows)))
         return len(rows)
 
     def record_raw_payload(
@@ -214,3 +229,62 @@ class FetchDailyCliTests(unittest.TestCase):
         market, rows = fake_repository.daily_quotes_calls[0]
         self.assertEqual(market, "US")
         self.assertEqual(rows[0]["symbol"], "AAPL")
+
+
+class FetchAllCliTests(unittest.TestCase):
+    """Verify the fetch all CLI commands."""
+
+    ENVIRONMENT = {
+        "DATABASE_URL": "postgresql+psycopg://harbor:secret@localhost:5432/harbor",
+        "DATA_PROVIDER_HK": "mock",
+        "DATA_PROVIDER_US": "mock",
+    }
+
+    def _run(self, market: str) -> tuple[RecordingRepository, str]:
+        fake_repository = RecordingRepository()
+        output = io.StringIO()
+        with (
+            patch.dict(os.environ, self.ENVIRONMENT, clear=True),
+            patch("harbor.cli.Repository", return_value=fake_repository),
+            patch("harbor.cli.create_engine"),
+        ):
+            with redirect_stdout(output), redirect_stderr(io.StringIO()):
+                exit_code = main(["fetch", "all", "--market", market])
+        self.assertEqual(exit_code, 0)
+        return fake_repository, output.getvalue()
+
+    def test_fetch_all_hk(self) -> None:
+        fake_repository, output = self._run("HK")
+        summary = json.loads(output)
+        self.assertEqual(summary["market"], "HK")
+        self.assertEqual(summary["provider"], "mock")
+        counts = summary["counts"]
+        self.assertGreaterEqual(counts["securities"], 10)
+        self.assertGreaterEqual(counts["daily_quotes"], 1)
+        self.assertGreaterEqual(counts["dividends"], 1)
+        self.assertGreaterEqual(counts["financials"], 1)
+        self.assertGreaterEqual(counts["corporate_actions"], 1)
+        self.assertEqual(summary["count"], sum(counts.values()))
+        self.assertEqual(fake_repository.calls[0][0], "HK")
+        self.assertEqual(fake_repository.daily_quotes_calls[0][0], "HK")
+        self.assertEqual(fake_repository.dividends_calls[0][0], "HK")
+        self.assertEqual(fake_repository.financials_calls[0][0], "HK")
+        self.assertEqual(fake_repository.corporate_actions_calls[0][0], "HK")
+
+    def test_fetch_all_us(self) -> None:
+        fake_repository, output = self._run("US")
+        summary = json.loads(output)
+        self.assertEqual(summary["market"], "US")
+        self.assertEqual(summary["provider"], "mock")
+        counts = summary["counts"]
+        self.assertGreaterEqual(counts["securities"], 10)
+        self.assertGreaterEqual(counts["daily_quotes"], 1)
+        self.assertGreaterEqual(counts["dividends"], 1)
+        self.assertGreaterEqual(counts["financials"], 1)
+        self.assertGreaterEqual(counts["corporate_actions"], 1)
+        self.assertEqual(summary["count"], sum(counts.values()))
+        self.assertEqual(fake_repository.calls[0][0], "US")
+        self.assertEqual(fake_repository.daily_quotes_calls[0][0], "US")
+        self.assertEqual(fake_repository.dividends_calls[0][0], "US")
+        self.assertEqual(fake_repository.financials_calls[0][0], "US")
+        self.assertEqual(fake_repository.corporate_actions_calls[0][0], "US")
