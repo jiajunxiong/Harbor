@@ -2,10 +2,12 @@
 
 import unittest
 from collections.abc import Mapping, Sequence
+from datetime import date
 from typing import Any
 
 from harbor.config import MarketTarget
-from harbor.core.ingestion import SecuritiesIngestor
+from harbor.core.ingestion import DailyQuoteIngestor, SecuritiesIngestor
+from harbor.core.interfaces import Capability, MarketDataProvider, ProviderCapabilities
 from harbor.infrastructure.data_providers.mock import MockProvider
 
 
@@ -14,9 +16,16 @@ class RecordingRepository:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, list[Mapping[str, Any]]]] = []
+        self.daily_quotes_calls: list[tuple[str, list[Mapping[str, Any]]]] = []
+        self.batch_sizes_seen: list[int] = []
 
     def upsert_securities(self, market: str, rows: Sequence[Mapping[str, Any]]) -> int:
         self.calls.append((market, list(rows)))
+        return len(rows)
+
+    def upsert_daily_quotes(self, market: str, rows: Sequence[Mapping[str, Any]]) -> int:
+        self.daily_quotes_calls.append((market, list(rows)))
+        self.batch_sizes_seen.append(len(rows))
         return len(rows)
 
 
@@ -63,3 +72,60 @@ class SecuritiesIngestionTests(unittest.TestCase):
         self.assertEqual(count, 0)
         market, rows = repository.calls[0]
         self.assertEqual(rows, [])
+
+
+class DailyQuoteIngestionTests(unittest.TestCase):
+    """Verify the daily quotes ingestion orchestration."""
+
+    def test_ingest_hk_daily_quotes_upserts_provider_rows(self) -> None:
+        repository = RecordingRepository()
+        ingestor = DailyQuoteIngestor(repository)  # type: ignore[arg-type]
+
+        count = ingestor.ingest(
+            MockProvider(), MarketTarget.HK, "0700.HK", date(2026, 1, 5), date(2026, 1, 9)
+        )
+
+        self.assertGreater(count, 0)
+        market, rows = repository.daily_quotes_calls[0]
+        self.assertEqual(market, "HK")
+        self.assertEqual(len(rows), count)
+        for row in rows:
+            self.assertEqual(row["market"], "HK")
+            self.assertEqual(row["symbol"], "0700.HK")
+
+    def test_ingest_us_daily_quotes_uses_us_rows(self) -> None:
+        repository = RecordingRepository()
+        ingestor = DailyQuoteIngestor(repository)  # type: ignore[arg-type]
+
+        count = ingestor.ingest(
+            MockProvider(), MarketTarget.US, "AAPL", date(2026, 1, 5), date(2026, 1, 9)
+        )
+
+        self.assertGreater(count, 0)
+        market, rows = repository.daily_quotes_calls[0]
+        self.assertEqual(market, "US")
+        self.assertEqual(rows[0]["symbol"], "AAPL")
+
+    def test_ingest_batches_large_result_sets(self) -> None:
+        class StubProvider(MarketDataProvider):
+            def capabilities(self) -> ProviderCapabilities:
+                return ProviderCapabilities({MarketTarget.HK: frozenset({Capability.DAILY_QUOTES})})
+
+            def fetch_daily_quotes(
+                self,
+                market: MarketTarget,
+                symbol: str,
+                start: date,
+                end: date,
+            ) -> Sequence[Mapping[str, Any]]:
+                return [{"market": "HK", "symbol": symbol, "date": date(2026, 1, 1)}] * 25
+
+        repository = RecordingRepository()
+        ingestor = DailyQuoteIngestor(repository, batch_size=10)  # type: ignore[arg-type]
+
+        count = ingestor.ingest(
+            StubProvider(), MarketTarget.HK, "0700.HK", date(2026, 1, 1), date(2026, 1, 31)
+        )
+
+        self.assertEqual(count, 25)
+        self.assertEqual(repository.batch_sizes_seen, [10, 10, 5])
