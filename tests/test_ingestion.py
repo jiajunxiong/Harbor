@@ -2,7 +2,7 @@
 
 import unittest
 from collections.abc import Mapping, Sequence
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from harbor.config import MarketTarget
@@ -26,6 +26,7 @@ class RecordingRepository:
         self.dividend_calls: list[tuple[str, list[Mapping[str, Any]]]] = []
         self.financial_calls: list[tuple[str, list[Mapping[str, Any]]]] = []
         self.corporate_action_calls: list[tuple[str, list[Mapping[str, Any]]]] = []
+        self.raw_payload_calls: list[dict[str, object]] = []
         self.batch_sizes_seen: list[int] = []
 
     def upsert_securities(self, market: str, rows: Sequence[Mapping[str, Any]]) -> int:
@@ -48,6 +49,27 @@ class RecordingRepository:
     def upsert_corporate_actions(self, market: str, rows: Sequence[Mapping[str, Any]]) -> int:
         self.corporate_action_calls.append((market, list(rows)))
         return len(rows)
+
+    def record_raw_payload(
+        self,
+        market: str,
+        run_id: str,
+        endpoint: str,
+        payload: Mapping[str, object],
+        retrieved_at: datetime,
+        symbol: str | None = None,
+    ) -> int:
+        self.raw_payload_calls.append(
+            {
+                "market": market,
+                "run_id": run_id,
+                "endpoint": endpoint,
+                "payload": dict(payload),
+                "retrieved_at": retrieved_at,
+                "symbol": symbol,
+            }
+        )
+        return 1
 
 
 class SecuritiesIngestionTests(unittest.TestCase):
@@ -252,3 +274,47 @@ class CorporateActionIngestionTests(unittest.TestCase):
         for row in rows:
             self.assertEqual(row["symbol"], "AAPL")
             self.assertIn(row["action_type"], us_types)
+
+
+class RawPayloadRecordingTests(unittest.TestCase):
+    """Verify raw payload storage during ingestion."""
+
+    def test_ingest_daily_quotes_records_raw_payload_with_market(self) -> None:
+        repository = RecordingRepository()
+        ingestor = DailyQuoteIngestor(repository, run_id="run-1")  # type: ignore[arg-type]
+
+        count = ingestor.ingest(
+            MockProvider(), MarketTarget.HK, "0700.HK", date(2026, 1, 5), date(2026, 1, 9)
+        )
+
+        self.assertGreater(count, 0)
+        self.assertEqual(len(repository.raw_payload_calls), 1)
+        call = repository.raw_payload_calls[0]
+        self.assertEqual(call["market"], "HK")
+        self.assertEqual(call["run_id"], "run-1")
+        self.assertEqual(call["endpoint"], "daily_quotes")
+        self.assertEqual(call["symbol"], "0700.HK")
+        payload_rows = call["payload"]["rows"]  # type: ignore[index]
+        self.assertEqual(len(payload_rows), count)
+
+    def test_ingest_without_run_id_records_no_payload(self) -> None:
+        repository = RecordingRepository()
+        ingestor = DailyQuoteIngestor(repository)  # type: ignore[arg-type]
+
+        ingestor.ingest(
+            MockProvider(), MarketTarget.HK, "0700.HK", date(2026, 1, 5), date(2026, 1, 9)
+        )
+
+        self.assertEqual(repository.raw_payload_calls, [])
+
+    def test_ingest_financials_records_payload_tagged_with_market(self) -> None:
+        repository = RecordingRepository()
+        ingestor = FinancialIngestor(repository, run_id="run-2")  # type: ignore[arg-type]
+
+        ingestor.ingest(MockProvider(), MarketTarget.US, "AAPL")
+
+        self.assertEqual(len(repository.raw_payload_calls), 1)
+        call = repository.raw_payload_calls[0]
+        self.assertEqual(call["market"], "US")
+        self.assertEqual(call["endpoint"], "financials")
+        self.assertEqual(call["symbol"], "AAPL")
