@@ -7,6 +7,7 @@ from typing import Any
 
 from harbor.config import MarketTarget
 from harbor.core.ingestion import (
+    CorporateActionIngestor,
     DailyQuoteIngestor,
     DividendIngestor,
     FinancialIngestor,
@@ -24,6 +25,7 @@ class RecordingRepository:
         self.daily_quotes_calls: list[tuple[str, list[Mapping[str, Any]]]] = []
         self.dividend_calls: list[tuple[str, list[Mapping[str, Any]]]] = []
         self.financial_calls: list[tuple[str, list[Mapping[str, Any]]]] = []
+        self.corporate_action_calls: list[tuple[str, list[Mapping[str, Any]]]] = []
         self.batch_sizes_seen: list[int] = []
 
     def upsert_securities(self, market: str, rows: Sequence[Mapping[str, Any]]) -> int:
@@ -41,6 +43,10 @@ class RecordingRepository:
 
     def upsert_financials(self, market: str, rows: Sequence[Mapping[str, Any]]) -> int:
         self.financial_calls.append((market, list(rows)))
+        return len(rows)
+
+    def upsert_corporate_actions(self, market: str, rows: Sequence[Mapping[str, Any]]) -> int:
+        self.corporate_action_calls.append((market, list(rows)))
         return len(rows)
 
 
@@ -208,3 +214,41 @@ class FinancialIngestionTests(unittest.TestCase):
         market, rows = repository.financial_calls[0]
         self.assertEqual(market, "US")
         self.assertEqual(rows[0]["symbol"], "AAPL")
+
+
+class CorporateActionIngestionTests(unittest.TestCase):
+    """Verify the corporate actions ingestion orchestration."""
+
+    def test_ingest_hk_corporate_actions_upserts_provider_rows(self) -> None:
+        repository = RecordingRepository()
+        ingestor = CorporateActionIngestor(repository)  # type: ignore[arg-type]
+
+        count = ingestor.ingest(
+            MockProvider(), MarketTarget.HK, "0005.HK", date(2015, 1, 1), date(2026, 12, 31)
+        )
+
+        self.assertGreater(count, 0)
+        market, rows = repository.corporate_action_calls[0]
+        self.assertEqual(market, "HK")
+        self.assertEqual(len(rows), count)
+        hk_types = {"rights_issue", "consolidation", "tender_offer", "dividend"}
+        for row in rows:
+            self.assertEqual(row["market"], "HK")
+            self.assertEqual(row["symbol"], "0005.HK")
+            self.assertIn(row["action_type"], hk_types)
+
+    def test_ingest_us_corporate_actions_uses_us_rows(self) -> None:
+        repository = RecordingRepository()
+        ingestor = CorporateActionIngestor(repository)  # type: ignore[arg-type]
+
+        count = ingestor.ingest(
+            MockProvider(), MarketTarget.US, "AAPL", date(2015, 1, 1), date(2026, 12, 31)
+        )
+
+        self.assertGreater(count, 0)
+        market, rows = repository.corporate_action_calls[0]
+        self.assertEqual(market, "US")
+        us_types = {"split", "merger", "spin_off", "dividend"}
+        for row in rows:
+            self.assertEqual(row["symbol"], "AAPL")
+            self.assertIn(row["action_type"], us_types)

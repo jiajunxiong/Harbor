@@ -121,3 +121,33 @@ class FinancialIngestor:
         """
         rows = provider.fetch_financials(market, symbol)
         return self._repository.upsert_financials(market.value, rows)
+
+
+class CorporateActionIngestor:
+    """Fetches and stores corporate actions for a symbol with idempotent writes."""
+
+    def __init__(self, repository: Repository) -> None:
+        self._repository = repository
+
+    def ingest(
+        self,
+        provider: MarketDataProvider,
+        market: MarketTarget,
+        symbol: str,
+        start: date,
+        end: date,
+    ) -> int:
+        """Fetch corporate actions from the provider and upsert them.
+
+        Args:
+            provider: The data source used to fetch corporate actions.
+            market: The market the symbol belongs to.
+            symbol: The security symbol.
+            start: The first relevant date to fetch.
+            end: The last relevant date to fetch.
+
+        Returns:
+            The number of corporate actions upserted.
+        """
+        rows = provider.fetch_corporate_actions(market, symbol, start, end)
+        return self._repository.upsert_corporate_actions(market.value, rows)
