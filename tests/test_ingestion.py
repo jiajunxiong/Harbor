@@ -6,7 +6,7 @@ from datetime import date
 from typing import Any
 
 from harbor.config import MarketTarget
-from harbor.core.ingestion import DailyQuoteIngestor, SecuritiesIngestor
+from harbor.core.ingestion import DailyQuoteIngestor, DividendIngestor, SecuritiesIngestor
 from harbor.core.interfaces import Capability, MarketDataProvider, ProviderCapabilities
 from harbor.infrastructure.data_providers.mock import MockProvider
 
@@ -17,6 +17,7 @@ class RecordingRepository:
     def __init__(self) -> None:
         self.calls: list[tuple[str, list[Mapping[str, Any]]]] = []
         self.daily_quotes_calls: list[tuple[str, list[Mapping[str, Any]]]] = []
+        self.dividend_calls: list[tuple[str, list[Mapping[str, Any]]]] = []
         self.batch_sizes_seen: list[int] = []
 
     def upsert_securities(self, market: str, rows: Sequence[Mapping[str, Any]]) -> int:
@@ -26,6 +27,10 @@ class RecordingRepository:
     def upsert_daily_quotes(self, market: str, rows: Sequence[Mapping[str, Any]]) -> int:
         self.daily_quotes_calls.append((market, list(rows)))
         self.batch_sizes_seen.append(len(rows))
+        return len(rows)
+
+    def upsert_dividends(self, market: str, rows: Sequence[Mapping[str, Any]]) -> int:
+        self.dividend_calls.append((market, list(rows)))
         return len(rows)
 
 
@@ -129,3 +134,38 @@ class DailyQuoteIngestionTests(unittest.TestCase):
 
         self.assertEqual(count, 25)
         self.assertEqual(repository.batch_sizes_seen, [10, 10, 5])
+
+
+class DividendIngestionTests(unittest.TestCase):
+    """Verify the dividends ingestion orchestration."""
+
+    def test_ingest_hk_dividends_upserts_provider_rows(self) -> None:
+        repository = RecordingRepository()
+        ingestor = DividendIngestor(repository)  # type: ignore[arg-type]
+
+        count = ingestor.ingest(
+            MockProvider(), MarketTarget.HK, "0700.HK", date(2025, 1, 1), date(2026, 12, 31)
+        )
+
+        self.assertGreater(count, 0)
+        market, rows = repository.dividend_calls[0]
+        self.assertEqual(market, "HK")
+        self.assertEqual(len(rows), count)
+        for row in rows:
+            self.assertEqual(row["market"], "HK")
+            self.assertEqual(row["symbol"], "0700.HK")
+            self.assertEqual(row["currency"], "HKD")
+
+    def test_ingest_us_dividends_uses_us_rows(self) -> None:
+        repository = RecordingRepository()
+        ingestor = DividendIngestor(repository)  # type: ignore[arg-type]
+
+        count = ingestor.ingest(
+            MockProvider(), MarketTarget.US, "AAPL", date(2025, 1, 1), date(2026, 12, 31)
+        )
+
+        self.assertGreater(count, 0)
+        market, rows = repository.dividend_calls[0]
+        self.assertEqual(market, "US")
+        self.assertEqual(rows[0]["symbol"], "AAPL")
+        self.assertEqual(rows[0]["currency"], "USD")

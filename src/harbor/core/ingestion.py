@@ -65,3 +65,33 @@ class DailyQuoteIngestor:
             batch = rows[batch_start : batch_start + self._batch_size]
             total += self._repository.upsert_daily_quotes(market.value, batch)
         return total
+
+
+class DividendIngestor:
+    """Fetches and stores dividends for a symbol with idempotent writes."""
+
+    def __init__(self, repository: Repository) -> None:
+        self._repository = repository
+
+    def ingest(
+        self,
+        provider: MarketDataProvider,
+        market: MarketTarget,
+        symbol: str,
+        start: date,
+        end: date,
+    ) -> int:
+        """Fetch dividends from the provider and upsert them.
+
+        Args:
+            provider: The data source used to fetch dividends.
+            market: The market the symbol belongs to.
+            symbol: The security symbol.
+            start: The first ex-date to fetch.
+            end: The last ex-date to fetch.
+
+        Returns:
+            The number of dividends upserted.
+        """
+        rows = provider.fetch_dividends(market, symbol, start, end)
+        return self._repository.upsert_dividends(market.value, rows)
