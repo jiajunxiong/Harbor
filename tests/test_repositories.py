@@ -72,3 +72,19 @@ class RepositoryTests(unittest.TestCase):
         sql = str(statement.compile(dialect=postgresql.dialect()))
         self.assertIn("FROM daily_quotes", sql)
         self.assertIn("daily_quotes.market = %(market_1)s", sql)
+
+    def test_quality_issues_statement_filters_by_market_and_run(self) -> None:
+        repository = Repository(connection=object())  # type: ignore[arg-type]
+        statement = repository._quality_issues_statement("HK", run_id="run-1")
+        sql = str(statement.compile(dialect=postgresql.dialect()))
+        self.assertIn("FROM quality_issues", sql)
+        self.assertIn("quality_issues.market = %(market_1)s", sql)
+        self.assertIn("quality_issues.run_id = %(run_id_1)s", sql)
+
+    def test_quality_issues_statement_market_only(self) -> None:
+        repository = Repository(connection=object())  # type: ignore[arg-type]
+        statement = repository._quality_issues_statement("US")
+        sql = str(statement.compile(dialect=postgresql.dialect()))
+        self.assertIn("FROM quality_issues", sql)
+        self.assertIn("quality_issues.market = %(market_1)s", sql)
+        self.assertNotIn("quality_issues.run_id =", sql)

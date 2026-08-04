@@ -167,6 +167,31 @@ def summarize_quality_issues(
     }
 
 
+def fetch_run_quality_report(
+    repository: Repository,
+    market: MarketTarget,
+    run_id: str,
+) -> dict[str, object]:
+    """Return the DQ report associated with an ingestion run.
+
+    Retrieves the quality issues recorded for ``run_id`` (linked through the
+    ``quality_issues.run_id`` foreign key) and summarizes them, providing
+    traceability from an ingestion run to its quality report.
+
+    Args:
+        repository: The storage repository used to read quality issues.
+        market: The market the run belongs to.
+        run_id: The ingestion run whose DQ report should be retrieved.
+
+    Returns:
+        A JSON-serializable summary scoped to the run.
+    """
+    issues = repository.fetch_quality_issues(market.value, run_id=run_id)
+    summary = summarize_quality_issues(market, issues)
+    summary["run_id"] = run_id
+    return summary
+
+
 def render_quality_csv(issues: Sequence[Mapping[str, Any]]) -> str:
     """Render quality-issue rows as CSV text with a header row."""
     buffer = io.StringIO()

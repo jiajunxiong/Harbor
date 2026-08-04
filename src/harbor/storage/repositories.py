@@ -253,8 +253,23 @@ class Repository:
             statement = statement.where(DailyQuote.date <= end)
         return statement
 
-    def fetch_quality_issues(self, market: str) -> list[dict[str, object]]:
-        """Return quality issues for a market as plain dictionaries."""
+    def _quality_issues_statement(
+        self,
+        market: str,
+        run_id: str | None = None,
+    ) -> Select[Any]:
+        """Build a market-scoped quality issues query, optionally for a run."""
         statement = select(QualityIssue).where(QualityIssue.market == market)
+        if run_id is not None:
+            statement = statement.where(QualityIssue.run_id == run_id)
+        return statement
+
+    def fetch_quality_issues(
+        self,
+        market: str,
+        run_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Return quality issues for a market, optionally filtered by run."""
+        statement = self._quality_issues_statement(market, run_id)
         result = self._connection.execute(statement)
         return [dict(row) for row in result.mappings()]

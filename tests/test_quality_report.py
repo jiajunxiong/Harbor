@@ -6,6 +6,7 @@ import unittest
 from harbor.config import MarketTarget
 from harbor.core.quality_report import (
     build_quality_summary,
+    fetch_run_quality_report,
     generate_quality_report,
     persist_quality_issues,
     render_quality_csv,
@@ -208,3 +209,59 @@ class RenderQualityCsvTests(unittest.TestCase):
         text = render_quality_csv([{"check_name": "coverage_gap"}])
         self.assertIn("coverage_gap", text)
         self.assertNotIn("None", text)
+
+
+class FetchRunQualityReportTests(unittest.TestCase):
+    """Verify run-to-DQ-report traceability (SP 1.98)."""
+
+    class RunQualityRepository:
+        """A stand-in repository returning run-scoped quality issues."""
+
+        def __init__(self, issues: list[dict[str, object]]) -> None:
+            self._issues = issues
+
+        def fetch_quality_issues(
+            self,
+            market: str,
+            run_id: str | None = None,
+        ) -> list[dict[str, object]]:
+            if run_id is None:
+                return self._issues
+            return [row for row in self._issues if row.get("run_id") == run_id]
+
+    def test_run_report_returns_run_scoped_summary(self) -> None:
+        issues = [
+            {
+                "run_id": "run-1",
+                "market": "US",
+                "symbol": "AAPL",
+                "check_name": "daily_quote_duplicate",
+                "severity": "error",
+                "details": "2 records.",
+                "resolved": False,
+            },
+            {
+                "run_id": "run-2",
+                "market": "US",
+                "symbol": "MSFT",
+                "check_name": "daily_quote_gap",
+                "severity": "warning",
+                "details": "Missing 1.",
+                "resolved": False,
+            },
+        ]
+        repository = self.RunQualityRepository(issues)
+        report = fetch_run_quality_report(repository, MarketTarget.US, "run-1")
+        self.assertEqual(report["run_id"], "run-1")
+        self.assertEqual(report["market"], "US")
+        self.assertEqual(report["total_findings"], 1)
+        self.assertEqual(report["errors"], 1)
+        self.assertEqual(report["status"], "fail")
+
+    def test_run_report_without_issues_passes(self) -> None:
+        repository = self.RunQualityRepository([])
+        report = fetch_run_quality_report(repository, MarketTarget.HK, "run-9")
+        self.assertEqual(report["run_id"], "run-9")
+        self.assertEqual(report["total_findings"], 0)
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["action"], "continue")
