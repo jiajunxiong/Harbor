@@ -95,3 +95,29 @@ class DividendIngestor:
         """
         rows = provider.fetch_dividends(market, symbol, start, end)
         return self._repository.upsert_dividends(market.value, rows)
+
+
+class FinancialIngestor:
+    """Fetches and stores financial metrics for a symbol with idempotent writes."""
+
+    def __init__(self, repository: Repository) -> None:
+        self._repository = repository
+
+    def ingest(
+        self,
+        provider: MarketDataProvider,
+        market: MarketTarget,
+        symbol: str,
+    ) -> int:
+        """Fetch financial metrics from the provider and upsert them.
+
+        Args:
+            provider: The data source used to fetch financial metrics.
+            market: The market the symbol belongs to.
+            symbol: The security symbol.
+
+        Returns:
+            The number of financial rows upserted.
+        """
+        rows = provider.fetch_financials(market, symbol)
+        return self._repository.upsert_financials(market.value, rows)
