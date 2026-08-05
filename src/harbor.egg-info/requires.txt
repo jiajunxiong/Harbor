@@ -5,6 +5,7 @@ pandas<4,>=3.0.3
 pydantic<3,>=2.8
 pydantic-settings<3,>=2.3
 psycopg[binary]<4,>=3.2
+PyYAML<7,>=6
 SQLAlchemy<3,>=2.0
 
 [backtest]

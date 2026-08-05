@@ -17,6 +17,7 @@ src/harbor/core/__init__.py
 src/harbor/core/action_mapping.py
 src/harbor/core/adjustments.py
 src/harbor/core/backtest_config.py
+src/harbor/core/backtest_config_loader.py
 src/harbor/core/backtest_domain.py
 src/harbor/core/backtest_interfaces.py
 src/harbor/core/equity.py
@@ -43,6 +44,7 @@ tests/test_adjustment_events.py
 tests/test_adjustments.py
 tests/test_akshare_providers.py
 tests/test_backtest_config.py
+tests/test_backtest_config_loader.py
 tests/test_backtest_dependencies.py
 tests/test_backtest_domain.py
 tests/test_backtest_interfaces.py

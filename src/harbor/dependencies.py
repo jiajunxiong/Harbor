@@ -48,6 +48,11 @@ LOCKED_DEPENDENCIES: tuple[DependencyPin, ...] = (
         purpose="PEP 440 version range checks used by the lock itself",
     ),
     DependencyPin(
+        name="pyyaml",
+        range_spec=">=6,<7",
+        purpose="strategy configuration files loaded from YAML (SP 2.5)",
+    ),
+    DependencyPin(
         name="numba",
         range_spec=">=0.66,<0.67",
         purpose="transitive JIT backend of vectorbt; pins numpy below 2.5",
