@@ -26,6 +26,7 @@ src/harbor/core/factor_alignment.py
 src/harbor/core/factor_dividend_sustainability.py
 src/harbor/core/factor_dividend_yield.py
 src/harbor/core/factor_drawdown_liquidity.py
+src/harbor/core/factor_earnings_quality.py
 src/harbor/core/factor_volatility.py
 src/harbor/core/fx.py
 src/harbor/core/history_window.py
@@ -77,6 +78,7 @@ tests/test_factor_alignment.py
 tests/test_factor_dividend_sustainability.py
 tests/test_factor_dividend_yield.py
 tests/test_factor_drawdown_liquidity.py
+tests/test_factor_earnings_quality.py
 tests/test_factor_volatility.py
 tests/test_financial_checks.py
 tests/test_fx.py
