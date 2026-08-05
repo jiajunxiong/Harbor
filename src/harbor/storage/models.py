@@ -345,6 +345,37 @@ class QualityIssue(Base):
     resolved: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
 
 
+class BacktestRun(Base):
+    """A master record of one backtest run (MVP 2 / SP 2.6).
+
+    Records the validated configuration snapshot, its stable hash (SP 2.5),
+    the code version, the data cutoff and the run lifecycle so every research
+    run is traceable and replayable. A run may span multiple markets (HK, US
+    or cross-market), so the table is keyed by ``run_id`` alone. Status values
+    mirror :class:`harbor.core.backtest_domain.BacktestStatus` (SP 2.46).
+    """
+
+    __tablename__ = "backtest_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('INITIALIZING', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED')",
+            name="ck_backtest_runs_status",
+        ),
+    )
+
+    run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    config_snapshot: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    strategy: Mapped[str] = mapped_column(String(64), nullable=False)
+    strategy_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    code_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    data_cutoff: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 v_quality_summary_hk = Table(
     "v_quality_summary_hk",
     Base.metadata,

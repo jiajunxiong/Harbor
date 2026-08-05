@@ -37,6 +37,7 @@ src/harbor/infrastructure/data_providers/factory.py
 src/harbor/infrastructure/data_providers/mock.py
 src/harbor/infrastructure/data_providers/yfinance.py
 src/harbor/storage/__init__.py
+src/harbor/storage/backtest_repositories.py
 src/harbor/storage/models.py
 src/harbor/storage/repositories.py
 tests/test_action_mapping.py
@@ -48,6 +49,7 @@ tests/test_backtest_config_loader.py
 tests/test_backtest_dependencies.py
 tests/test_backtest_domain.py
 tests/test_backtest_interfaces.py
+tests/test_backtest_repositories.py
 tests/test_cli.py
 tests/test_config.py
 tests/test_corporate_action_checks.py
