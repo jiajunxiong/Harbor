@@ -16,13 +16,16 @@ from harbor.core.backtest_interfaces import (
 )
 from harbor.core.equity import EntitlementEvent
 from harbor.core.market_registry import CorporateActionType
+from harbor.core.stock_pool import StockPoolMembership
 from harbor.storage.backtest_data_reader import (
     StorageBacktestDataReader,
     _adjustment_factor_from_row,
     _dividend_from_row,
     _entitlements_from_rows,
     _fundamental_from_row,
+    _membership_from_row,
     _quote_from_row,
+    _securities_rows_statement,
     _securities_statement,
 )
 
@@ -195,6 +198,38 @@ class ReaderContractTests(unittest.TestCase):
         self.assertTrue(issubclass(StorageBacktestDataReader, BacktestDataReader))
         reader = StorageBacktestDataReader(connection=object())  # type: ignore[arg-type]
         self.assertIsNotNone(reader)
+
+
+class StockPoolReaderTests(unittest.TestCase):
+    """Verify the reader's historical stock pool integration (SP 2.10)."""
+
+    def test_reader_exposes_stock_pool(self) -> None:
+        self.assertTrue(hasattr(StorageBacktestDataReader, "stock_pool"))
+
+    def test_membership_from_row_maps_listing_and_delisting_dates(self) -> None:
+        membership = _membership_from_row(
+            {
+                "market": "HK",
+                "symbol": "0005.HK",
+                "list_date": date(1990, 1, 1),
+                "delist_date": None,
+            },
+            "hkex_universe",
+        )
+        self.assertIsInstance(membership, StockPoolMembership)
+        self.assertEqual(membership.market, Market.HK)
+        self.assertEqual(membership.effective_date, date(1990, 1, 1))
+        self.assertIsNone(membership.expiry_date)
+        self.assertEqual(membership.source, "hkex_universe")
+
+    def test_securities_rows_statement_orders_by_symbol_without_date_filters(self) -> None:
+        statement = _securities_rows_statement(Market.US)
+        sql = str(statement.compile(dialect=postgresql.dialect()))
+        self.assertIn("FROM securities", sql)
+        self.assertIn("securities.market = %(market_1)s", sql)
+        self.assertIn("ORDER BY securities.symbol", sql)
+        self.assertNotIn("list_date <=", sql)
+        self.assertNotIn("delist_date IS NULL", sql)
 
 
 if __name__ == "__main__":

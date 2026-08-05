@@ -25,7 +25,7 @@ from typing import Any
 from sqlalchemy import Connection, Select, or_, select
 
 from harbor.core.adjustments import ActionTerms
-from harbor.core.backtest_domain import Currency, Market
+from harbor.core.backtest_domain import Currency, Market, to_market_target
 from harbor.core.backtest_interfaces import (
     AdjustmentFactor,
     BacktestDataReader,
@@ -34,8 +34,13 @@ from harbor.core.backtest_interfaces import (
     FundamentalRecord,
 )
 from harbor.core.equity import EntitlementEvent
-from harbor.core.market_registry import CorporateActionType
+from harbor.core.market_registry import CorporateActionType, get_market_config
 from harbor.core.point_in_time import filter_available
+from harbor.core.stock_pool import (
+    StockPool,
+    StockPoolMembership,
+    evaluate_stock_pool,
+)
 from harbor.storage.models import (
     AdjustedFactor as AdjustedFactorModel,
 )
@@ -199,6 +204,33 @@ def _securities_statement(market: Market, as_of: date) -> Select[Any]:
     )
 
 
+def _securities_rows_statement(market: Market) -> Select[Any]:
+    """Return all securities for a market, ordered by symbol (for pool eval)."""
+    return (
+        select(SecurityModel)
+        .where(SecurityModel.market == market.value)
+        .order_by(SecurityModel.symbol)
+    )
+
+
+def _membership_from_row(
+    row: Mapping[str, Any],
+    source: str,
+) -> StockPoolMembership:
+    """Map a securities row to a :class:`StockPoolMembership`.
+
+    The listing date becomes the inclusion (effective) date and the delisting
+    date the expiry date (SP 2.10).
+    """
+    return StockPoolMembership(
+        market=_market(row["market"]),
+        symbol=row["symbol"],
+        effective_date=row.get("list_date"),
+        expiry_date=row.get("delist_date"),
+        source=source,
+    )
+
+
 class StorageBacktestDataReader(BacktestDataReader):
     """BacktestDataReader backed by the Harbor storage repositories (SP 2.8)."""
 
@@ -212,6 +244,32 @@ class StorageBacktestDataReader(BacktestDataReader):
     def list_securities(self, market: Market, as_of: date) -> Sequence[str]:
         statement = _securities_statement(market, as_of)
         return [row["symbol"] for row in self._execute(statement)]
+
+    def stock_pool(
+        self,
+        market: Market,
+        as_of: date,
+        *,
+        historical_known: bool,
+    ) -> StockPool:
+        """Return the market's historical stock pool evaluated on ``as_of``.
+
+        Memberships are derived from the ``securities`` table (listing and
+        delisting dates) and the market's configured stock pool source.
+        ``historical_known`` declares whether the source provides historical
+        constituents; when false, the pool is marked with survivorship-bias
+        risk (SP 2.10).
+        """
+        source = get_market_config(to_market_target(market)).stock_pool_source
+        statement = _securities_rows_statement(market)
+        memberships = [_membership_from_row(row, source) for row in self._execute(statement)]
+        return evaluate_stock_pool(
+            market,
+            as_of,
+            memberships,
+            source,
+            historical_known=historical_known,
+        )
 
     def daily_quotes(
         self,

@@ -30,6 +30,7 @@ src/harbor/core/quality_policy.py
 src/harbor/core/quality_report.py
 src/harbor/core/recalculation.py
 src/harbor/core/review_queue.py
+src/harbor/core/stock_pool.py
 src/harbor/core/validation.py
 src/harbor/infrastructure/__init__.py
 src/harbor/infrastructure/data_providers/__init__.py
@@ -81,6 +82,7 @@ tests/test_recalculation.py
 tests/test_reconciliation.py
 tests/test_repositories.py
 tests/test_review_queue.py
+tests/test_stock_pool.py
 tests/test_validation.py
 tests/test_yfinance_contract.py
 tests/test_yfinance_providers.py
