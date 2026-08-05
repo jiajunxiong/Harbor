@@ -88,6 +88,7 @@ tests/test_quality_report.py
 tests/test_recalculation.py
 tests/test_reconciliation.py
 tests/test_repositories.py
+tests/test_research_smoke.py
 tests/test_review_queue.py
 tests/test_stock_pool.py
 tests/test_trading_calendar.py
