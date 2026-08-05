@@ -291,6 +291,37 @@ class Repository:
             statement = statement.where(CorporateAction.symbol == symbol)
         return statement
 
+    def list_adjusted_factors(
+        self,
+        market: str,
+        symbol: str | None = None,
+        start: date | None = None,
+        end: date | None = None,
+    ) -> Select[Any]:
+        """Return a market-scoped adjusted factors query with optional filters."""
+        statement = select(AdjustedFactor).where(AdjustedFactor.market == market)
+        if symbol is not None:
+            statement = statement.where(AdjustedFactor.symbol == symbol)
+        if start is not None:
+            statement = statement.where(AdjustedFactor.date >= start)
+        if end is not None:
+            statement = statement.where(AdjustedFactor.date <= end)
+        return statement
+
+    def list_action_terms(
+        self,
+        market: str,
+        symbol: str | None = None,
+        action_ids: Sequence[str] | None = None,
+    ) -> Select[Any]:
+        """Return a market-scoped action terms query with optional filters."""
+        statement = select(ActionTerm).where(ActionTerm.market == market)
+        if symbol is not None:
+            statement = statement.where(ActionTerm.symbol == symbol)
+        if action_ids:
+            statement = statement.where(ActionTerm.action_id.in_(action_ids))
+        return statement
+
     def list_dividends(
         self,
         market: str,
