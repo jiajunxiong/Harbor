@@ -12,11 +12,10 @@ The reader is point-in-time aware:
   were listed and not yet delisted on the given date, so the universe is free
   of survivorship bias (SP 2.10). A security with an unknown listing date is
   excluded because its listing on that date cannot be confirmed.
-- :meth:`StorageBacktestDataReader.fundamentals` refuses records whose
-  availability date is unknown rather than silently looking ahead (SP 2.9).
-  MVP 1 does not store a disclosure date on ``financials``, so these records
-  currently surface with ``available_on=None`` and are excluded; usable
-  fundamentals require adding disclosure dates to the schema (SP 2.9 / 2.15).
+- :meth:`StorageBacktestDataReader.fundamentals` applies the point-in-time
+  availability rules (SP 2.9): a financial record is usable only when its
+  ``disclosure_date`` is known and on or before the requested date. Records
+  with an unknown disclosure date are refused rather than dated by guess.
 """
 
 from collections.abc import Mapping, Sequence
@@ -36,6 +35,7 @@ from harbor.core.backtest_interfaces import (
 )
 from harbor.core.equity import EntitlementEvent
 from harbor.core.market_registry import CorporateActionType
+from harbor.core.point_in_time import filter_available
 from harbor.storage.models import (
     AdjustedFactor as AdjustedFactorModel,
 )
@@ -101,16 +101,16 @@ def _dividend_from_row(row: Mapping[str, Any]) -> Dividend:
 def _fundamental_from_row(row: Mapping[str, Any]) -> FundamentalRecord:
     """Map a financial row to an immutable :class:`FundamentalRecord`.
 
-    MVP 1 stores no disclosure date, so ``available_on`` is ``None``; the
-    point-in-time filter (SP 2.9) then refuses the record rather than guessing
-    when it became knowable.
+    ``available_on`` is the financial ``disclosure_date`` (SP 2.9); a missing
+    disclosure date surfaces as ``None`` so the point-in-time filter refuses
+    the record rather than guessing when it became knowable.
     """
     return FundamentalRecord(
         market=_market(row["market"]),
         symbol=row["symbol"],
         report_date=row["report_date"],
         fiscal_period=row["fiscal_period"],
-        available_on=None,
+        available_on=row.get("disclosure_date"),
         roe=_as_float(row.get("roe")),
         net_income=_as_float(row.get("net_income")),
         total_equity=_as_float(row.get("total_equity")),
@@ -175,22 +175,6 @@ def _entitlements_from_rows(
     return tuple(
         _entitlement_from_rows(row, terms_by_action.get(row["action_id"], ()))
         for row in action_rows
-    )
-
-
-def _available_as_of(
-    records: Sequence[FundamentalRecord],
-    as_of: date,
-) -> tuple[FundamentalRecord, ...]:
-    """Return only records knowable on or before ``as_of`` (SP 2.9).
-
-    Records with an unknown availability date are refused rather than silently
-    used, because an undated report risks look-ahead.
-    """
-    return tuple(
-        record
-        for record in records
-        if record.available_on is not None and record.available_on <= as_of
     )
 
 
@@ -264,7 +248,7 @@ class StorageBacktestDataReader(BacktestDataReader):
         statement = self._repository.list_financials(market.value, symbol)
         statement = statement.order_by(FinancialModel.report_date)
         records = [_fundamental_from_row(row) for row in self._execute(statement)]
-        return _available_as_of(records, as_of)
+        return filter_available(records, as_of)
 
     def corporate_actions(
         self,

@@ -146,6 +146,7 @@ class FinancialModelTests(unittest.TestCase):
                 "symbol",
                 "report_date",
                 "fiscal_period",
+                "disclosure_date",
                 "roe",
                 "net_income",
                 "total_equity",

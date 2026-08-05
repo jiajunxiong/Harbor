@@ -24,6 +24,7 @@ src/harbor/core/equity.py
 src/harbor/core/ingestion.py
 src/harbor/core/interfaces.py
 src/harbor/core/market_registry.py
+src/harbor/core/point_in_time.py
 src/harbor/core/quality_checks.py
 src/harbor/core/quality_policy.py
 src/harbor/core/quality_report.py
@@ -70,6 +71,7 @@ tests/test_migrations.py
 tests/test_mock_provider.py
 tests/test_models.py
 tests/test_ohlc_checks.py
+tests/test_point_in_time.py
 tests/test_provider_factory.py
 tests/test_provider_switch.py
 tests/test_quality_checks.py

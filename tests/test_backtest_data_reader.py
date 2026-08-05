@@ -19,7 +19,6 @@ from harbor.core.market_registry import CorporateActionType
 from harbor.storage.backtest_data_reader import (
     StorageBacktestDataReader,
     _adjustment_factor_from_row,
-    _available_as_of,
     _dividend_from_row,
     _entitlements_from_rows,
     _fundamental_from_row,
@@ -82,23 +81,35 @@ class RowMappingTests(unittest.TestCase):
         )
         self.assertFalse(regular.is_special)
 
-    def test_fundamental_from_row_has_unknown_availability(self) -> None:
-        record = _fundamental_from_row(
+    def test_fundamental_from_row_maps_disclosure_date(self) -> None:
+        dated = _fundamental_from_row(
             {
                 "market": "US",
                 "symbol": "AAPL",
                 "report_date": date(2025, 12, 31),
                 "fiscal_period": "FY2025",
+                "disclosure_date": date(2026, 2, 15),
                 "roe": 0.3,
                 "net_income": None,
                 "total_equity": 10.0,
                 "revenue": 20.0,
             }
         )
-        self.assertIsInstance(record, FundamentalRecord)
-        self.assertIsNone(record.available_on)
-        self.assertEqual(record.roe, 0.3)
-        self.assertIsNone(record.net_income)
+        self.assertIsInstance(dated, FundamentalRecord)
+        self.assertEqual(dated.available_on, date(2026, 2, 15))
+        self.assertEqual(dated.roe, 0.3)
+        self.assertIsNone(dated.net_income)
+
+        undated = _fundamental_from_row(
+            {
+                "market": "US",
+                "symbol": "AAPL",
+                "report_date": date(2025, 12, 31),
+                "fiscal_period": "FY2025",
+                "disclosure_date": None,
+            }
+        )
+        self.assertIsNone(undated.available_on)
 
     def test_adjustment_factor_from_row(self) -> None:
         factor = _adjustment_factor_from_row(
@@ -161,29 +172,6 @@ class RowMappingTests(unittest.TestCase):
                 ],
                 [],
             )
-
-
-class PointInTimeTests(unittest.TestCase):
-    """Verify point-in-time availability filtering (SP 2.9)."""
-
-    def test_available_as_of_keeps_only_known_and_timely_records(self) -> None:
-        def record(available_on: date | None) -> FundamentalRecord:
-            return FundamentalRecord(
-                market=Market.US,
-                symbol="AAPL",
-                report_date=date(2025, 12, 31),
-                fiscal_period="FY2025",
-                available_on=available_on,
-                roe=0.3,
-            )
-
-        as_of = date(2026, 3, 31)
-        kept = _available_as_of(
-            [record(date(2026, 3, 1)), record(date(2026, 4, 1)), record(None)],
-            as_of,
-        )
-        self.assertEqual(len(kept), 1)
-        self.assertEqual(kept[0].available_on, date(2026, 3, 1))
 
 
 class UniverseTests(unittest.TestCase):

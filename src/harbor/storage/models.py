@@ -119,6 +119,7 @@ class Financial(Base):
     symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
     report_date: Mapped[date] = mapped_column(Date, primary_key=True)
     fiscal_period: Mapped[str] = mapped_column(String(16), primary_key=True)
+    disclosure_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     roe: Mapped[float | None] = mapped_column(Numeric(20, 6), nullable=True)
     net_income: Mapped[float | None] = mapped_column(Numeric(20, 6), nullable=True)
     total_equity: Mapped[float | None] = mapped_column(Numeric(20, 6), nullable=True)
