@@ -16,6 +16,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    UniqueConstraint,
     false,
     text,
     true,
@@ -374,6 +375,171 @@ class BacktestRun(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class BacktestNetValue(Base):
+    """A daily net-value snapshot for a backtest run (MVP 2 / SP 2.7)."""
+
+    __tablename__ = "backtest_net_values"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["backtest_run_id"],
+            ["backtest_runs.run_id"],
+            name="fk_backtest_net_values_run",
+        ),
+        UniqueConstraint(
+            "backtest_run_id",
+            "as_of_date",
+            "currency",
+            name="uq_backtest_net_values_day_currency",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    backtest_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    cash: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    securities_value: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    fees_paid: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    total_value: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+
+
+class BacktestPosition(Base):
+    """A daily position snapshot for a backtest run (MVP 2 / SP 2.7)."""
+
+    __tablename__ = "backtest_positions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["backtest_run_id"],
+            ["backtest_runs.run_id"],
+            name="fk_backtest_positions_run",
+        ),
+        UniqueConstraint(
+            "backtest_run_id",
+            "market",
+            "symbol",
+            "as_of_date",
+            name="uq_backtest_positions_holding",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    backtest_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    market: Mapped[str] = mapped_column(String(2), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
+    quantity: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    average_cost: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+
+
+class BacktestFill(Base):
+    """An executed order (成交) for a backtest run (MVP 2 / SP 2.7)."""
+
+    __tablename__ = "backtest_fills"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["backtest_run_id"],
+            ["backtest_runs.run_id"],
+            name="fk_backtest_fills_run",
+        ),
+        CheckConstraint("side IN ('BUY', 'SELL')", name="ck_backtest_fills_side"),
+        Index("ix_backtest_fills_run_date", "backtest_run_id", "trade_date"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    backtest_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    market: Mapped[str] = mapped_column(String(2), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    side: Mapped[str] = mapped_column(String(4), nullable=False)
+    quantity: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    price: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    fee: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    order_ref: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class BacktestRebalance(Base):
+    """A rebalance event for a backtest run (MVP 2 / SP 2.7)."""
+
+    __tablename__ = "backtest_rebalances"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["backtest_run_id"],
+            ["backtest_runs.run_id"],
+            name="fk_backtest_rebalances_run",
+        ),
+        UniqueConstraint(
+            "backtest_run_id",
+            "market",
+            "rebalance_date",
+            name="uq_backtest_rebalances_day",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    backtest_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    market: Mapped[str] = mapped_column(String(2), nullable=False)
+    rebalance_date: Mapped[date] = mapped_column(Date, nullable=False)
+    ref: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class BacktestMetric(Base):
+    """A performance metric for a backtest run (MVP 2 / SP 2.7)."""
+
+    __tablename__ = "backtest_metrics"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["backtest_run_id"],
+            ["backtest_runs.run_id"],
+            name="fk_backtest_metrics_run",
+        ),
+        UniqueConstraint(
+            "backtest_run_id",
+            "metric_name",
+            "as_of_date",
+            name="uq_backtest_metrics_name_date",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    backtest_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    metric_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    as_of_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    value: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+
+
+class BacktestRejectedTrade(Base):
+    """A trade the backtest refused to execute, with the reason (MVP 2 / SP 2.7).
+
+    Captures orders rejected by suspension, delisting, liquidity or other
+    constraints so every non-execution is auditable (SP 2.40 / 2.41).
+    """
+
+    __tablename__ = "backtest_rejected_trades"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["backtest_run_id"],
+            ["backtest_runs.run_id"],
+            name="fk_backtest_rejected_trades_run",
+        ),
+        CheckConstraint(
+            "side IS NULL OR side IN ('BUY', 'SELL')",
+            name="ck_backtest_rejected_trades_side",
+        ),
+        Index("ix_backtest_rejected_trades_run_market", "backtest_run_id", "market"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    backtest_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    market: Mapped[str] = mapped_column(String(2), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    side: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    quantity: Mapped[float | None] = mapped_column(Numeric(20, 6), nullable=True)
+    reason: Mapped[str] = mapped_column(String(255), nullable=False)
+    order_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 v_quality_summary_hk = Table(
