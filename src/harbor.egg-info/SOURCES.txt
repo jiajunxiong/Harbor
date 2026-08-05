@@ -16,6 +16,7 @@ src/harbor.egg-info/top_level.txt
 src/harbor/core/__init__.py
 src/harbor/core/action_mapping.py
 src/harbor/core/adjustments.py
+src/harbor/core/backtest_domain.py
 src/harbor/core/equity.py
 src/harbor/core/ingestion.py
 src/harbor/core/interfaces.py
@@ -40,6 +41,7 @@ tests/test_adjustment_events.py
 tests/test_adjustments.py
 tests/test_akshare_providers.py
 tests/test_backtest_dependencies.py
+tests/test_backtest_domain.py
 tests/test_cli.py
 tests/test_config.py
 tests/test_corporate_action_checks.py
