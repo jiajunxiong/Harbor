@@ -32,6 +32,7 @@ from harbor.core.backtest_interfaces import (
     DailyQuote,
     Dividend,
     FundamentalRecord,
+    FxRateRecord,
 )
 from harbor.core.equity import EntitlementEvent
 from harbor.core.market_registry import CorporateActionType, get_market_config
@@ -276,6 +277,34 @@ class StorageBacktestDataReader(BacktestDataReader):
             historical_known=historical_known,
         )
 
+    def fx_rate_with_date(
+        self,
+        from_currency: Currency,
+        to_currency: Currency,
+        as_of: date,
+    ) -> FxRateRecord | None:
+        """Return the last known FX rate (from→to) on or before ``as_of``.
+
+        Unlike :meth:`fx_rate`, the returned :class:`FxRateRecord` also carries
+        the rate's date, so factor-input alignment (SP 2.15) preserves when the
+        rate was knowable. Returns a ``1.0`` record dated ``as_of`` for a
+        same-currency pair and ``None`` when no rate is available, so the
+        caller refuses conversion rather than assuming 1:1 (SP 2.12).
+        """
+        if from_currency is to_currency:
+            return FxRateRecord(from_currency, to_currency, 1.0, as_of)
+        statement = self._fx.list_fx_rates(from_currency.value, to_currency.value, end=as_of)
+        statement = statement.order_by(FxRateModel.date.desc()).limit(1)
+        rows = self._execute(statement)
+        if not rows:
+            return None
+        return FxRateRecord(
+            from_currency=from_currency,
+            to_currency=to_currency,
+            rate=float(rows[0]["rate"]),
+            date=rows[0]["date"],
+        )
+
     def fx_rate(
         self,
         from_currency: Currency,
@@ -288,14 +317,8 @@ class StorageBacktestDataReader(BacktestDataReader):
         available on or before ``as_of``, so the caller refuses conversion
         rather than assuming 1:1 (SP 2.12).
         """
-        if from_currency is to_currency:
-            return 1.0
-        statement = self._fx.list_fx_rates(from_currency.value, to_currency.value, end=as_of)
-        statement = statement.order_by(FxRateModel.date.desc()).limit(1)
-        rows = self._execute(statement)
-        if not rows:
-            return None
-        return float(rows[0]["rate"])
+        record = self.fx_rate_with_date(from_currency, to_currency, as_of)
+        return None if record is None else record.rate
 
     def daily_quotes(
         self,

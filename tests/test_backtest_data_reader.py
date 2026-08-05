@@ -206,6 +206,16 @@ class ReaderContractTests(unittest.TestCase):
         reader = StorageBacktestDataReader(connection=object())  # type: ignore[arg-type]
         self.assertEqual(reader.fx_rate(Currency.HKD, Currency.HKD, date(2026, 1, 2)), 1.0)
 
+    def test_reader_exposes_fx_rate_with_date(self) -> None:
+        self.assertTrue(hasattr(StorageBacktestDataReader, "fx_rate_with_date"))
+
+    def test_fx_rate_with_date_same_currency_returns_one_at_as_of(self) -> None:
+        reader = StorageBacktestDataReader(connection=object())  # type: ignore[arg-type]
+        record = reader.fx_rate_with_date(Currency.HKD, Currency.HKD, date(2026, 1, 2))
+        self.assertIsNotNone(record)
+        self.assertEqual(record.rate, 1.0)  # type: ignore[union-attr]
+        self.assertEqual(record.date, date(2026, 1, 2))  # type: ignore[union-attr]
+
 
 class StockPoolReaderTests(unittest.TestCase):
     """Verify the reader's historical stock pool integration (SP 2.10)."""

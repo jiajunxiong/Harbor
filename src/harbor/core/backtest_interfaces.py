@@ -115,6 +115,26 @@ class AdjustmentFactor:
             raise ValueError("Daily factor must be positive.")
 
 
+@dataclass(frozen=True)
+class FxRateRecord:
+    """A point-in-time FX rate with its effective date (SP 2.15).
+
+    ``rate`` is the number of ``to_currency`` units per one ``from_currency``
+    unit on ``date``. ``date`` is the availability date, so FX inputs can be
+    aligned to a decision date (SP 2.15) without losing when the rate was
+    knowable; a rate is usable on or after its own date.
+    """
+
+    from_currency: Currency
+    to_currency: Currency
+    rate: float
+    date: date
+
+    def __post_init__(self) -> None:
+        if self.rate <= 0:
+            raise ValueError("FX rate must be positive.")
+
+
 class BacktestDataReader(ABC):
     """Point-in-time data access for the backtest engine (SP 2.8).
 
