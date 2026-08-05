@@ -23,6 +23,7 @@ src/harbor/core/backtest_interfaces.py
 src/harbor/core/data_readiness.py
 src/harbor/core/equity.py
 src/harbor/core/factor_alignment.py
+src/harbor/core/factor_dividend_sustainability.py
 src/harbor/core/factor_dividend_yield.py
 src/harbor/core/fx.py
 src/harbor/core/history_window.py
@@ -71,6 +72,7 @@ tests/test_docker_smoke.py
 tests/test_equity.py
 tests/test_equity_events.py
 tests/test_factor_alignment.py
+tests/test_factor_dividend_sustainability.py
 tests/test_factor_dividend_yield.py
 tests/test_financial_checks.py
 tests/test_fx.py
