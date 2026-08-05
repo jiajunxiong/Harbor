@@ -21,6 +21,7 @@ src/harbor/core/backtest_config_loader.py
 src/harbor/core/backtest_domain.py
 src/harbor/core/backtest_interfaces.py
 src/harbor/core/equity.py
+src/harbor/core/fx.py
 src/harbor/core/ingestion.py
 src/harbor/core/interfaces.py
 src/harbor/core/market_registry.py
@@ -42,6 +43,7 @@ src/harbor/infrastructure/data_providers/yfinance.py
 src/harbor/storage/__init__.py
 src/harbor/storage/backtest_data_reader.py
 src/harbor/storage/backtest_repositories.py
+src/harbor/storage/fx_repository.py
 src/harbor/storage/models.py
 src/harbor/storage/repositories.py
 tests/test_action_mapping.py
@@ -64,6 +66,8 @@ tests/test_docker_smoke.py
 tests/test_equity.py
 tests/test_equity_events.py
 tests/test_financial_checks.py
+tests/test_fx.py
+tests/test_fx_repository.py
 tests/test_ingestion.py
 tests/test_integration.py
 tests/test_interfaces.py

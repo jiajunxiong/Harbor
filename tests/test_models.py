@@ -11,6 +11,7 @@ from harbor.storage.models import (
     EquityEvent,
     Financial,
     Fundamental,
+    FxRate,
     IngestionRun,
     Position,
     QualityIssue,
@@ -156,6 +157,30 @@ class FinancialModelTests(unittest.TestCase):
         self.assertEqual(
             {foreign_key.target_fullname for foreign_key in table.foreign_keys},
             {"securities.market", "securities.symbol"},
+        )
+
+
+class FxRateModelTests(unittest.TestCase):
+    """Verify the fx_rates schema contract (MVP 2 / SP 2.12)."""
+
+    def test_fx_rates_has_expected_columns_and_composite_primary_key(self) -> None:
+        table = FxRate.__table__
+
+        self.assertEqual(table.name, "fx_rates")
+        self.assertEqual(
+            tuple(table.primary_key.columns.keys()),
+            ("from_currency", "to_currency", "date"),
+        )
+        self.assertEqual(
+            set(table.columns.keys()),
+            {
+                "from_currency",
+                "to_currency",
+                "date",
+                "rate",
+                "source",
+                "quality",
+            },
         )
 
 

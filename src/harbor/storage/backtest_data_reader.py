@@ -41,6 +41,7 @@ from harbor.core.stock_pool import (
     StockPoolMembership,
     evaluate_stock_pool,
 )
+from harbor.storage.fx_repository import FxRepository
 from harbor.storage.models import (
     AdjustedFactor as AdjustedFactorModel,
 )
@@ -55,6 +56,9 @@ from harbor.storage.models import (
 )
 from harbor.storage.models import (
     Financial as FinancialModel,
+)
+from harbor.storage.models import (
+    FxRate as FxRateModel,
 )
 from harbor.storage.models import (
     Security as SecurityModel,
@@ -237,6 +241,7 @@ class StorageBacktestDataReader(BacktestDataReader):
     def __init__(self, connection: Connection) -> None:
         self._connection = connection
         self._repository = Repository(connection)
+        self._fx = FxRepository(connection)
 
     def _execute(self, statement: Select[Any]) -> Sequence[Mapping[str, Any]]:
         return [dict(row) for row in self._connection.execute(statement).mappings()]
@@ -270,6 +275,27 @@ class StorageBacktestDataReader(BacktestDataReader):
             source,
             historical_known=historical_known,
         )
+
+    def fx_rate(
+        self,
+        from_currency: Currency,
+        to_currency: Currency,
+        as_of: date,
+    ) -> float | None:
+        """Return the last known FX rate (from→to) on or before ``as_of``.
+
+        Returns ``1.0`` for a same-currency pair and ``None`` when no rate is
+        available on or before ``as_of``, so the caller refuses conversion
+        rather than assuming 1:1 (SP 2.12).
+        """
+        if from_currency is to_currency:
+            return 1.0
+        statement = self._fx.list_fx_rates(from_currency.value, to_currency.value, end=as_of)
+        statement = statement.order_by(FxRateModel.date.desc()).limit(1)
+        rows = self._execute(statement)
+        if not rows:
+            return None
+        return float(rows[0]["rate"])
 
     def daily_quotes(
         self,

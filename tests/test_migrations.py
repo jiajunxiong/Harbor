@@ -103,7 +103,7 @@ class MigrationChainTests(unittest.TestCase):
         bases = script.get_bases()
         self.assertEqual(len(heads), 1)
         self.assertEqual(len(bases), 1)
-        self.assertEqual(heads[0], "0019_add_financials_disclosure")
+        self.assertEqual(heads[0], "0020_create_fx_rates")
         self.assertEqual(bases[0], "0001_create_securities")
 
         versions = list(script.walk_revisions())

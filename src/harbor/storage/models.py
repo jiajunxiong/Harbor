@@ -275,6 +275,39 @@ class AdjustedFactor(Base):
     daily_factor: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
 
 
+class FxRate(Base):
+    """A daily foreign-exchange rate (MVP 2 / SP 2.12).
+
+    ``rate`` is the number of ``to_currency`` units per one ``from_currency``
+    unit on ``date``. ``quality`` marks whether the rate is ``official`` or
+    ``estimated`` so downstream users can weigh its reliability.
+    """
+
+    __tablename__ = "fx_rates"
+    __table_args__ = (
+        CheckConstraint(
+            "from_currency IN ('HKD', 'USD')",
+            name="ck_fx_rates_from_currency",
+        ),
+        CheckConstraint(
+            "to_currency IN ('HKD', 'USD')",
+            name="ck_fx_rates_to_currency",
+        ),
+        CheckConstraint(
+            "quality IN ('official', 'estimated')",
+            name="ck_fx_rates_quality",
+        ),
+        CheckConstraint("rate > 0", name="ck_fx_rates_rate_positive"),
+    )
+
+    from_currency: Mapped[str] = mapped_column(String(3), primary_key=True)
+    to_currency: Mapped[str] = mapped_column(String(3), primary_key=True)
+    date: Mapped[date] = mapped_column(Date, primary_key=True)
+    rate: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    quality: Mapped[str] = mapped_column(String(16), nullable=False)
+
+
 class IngestionRun(Base):
     """A record of a single data-ingestion run."""
 
