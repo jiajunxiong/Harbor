@@ -9,6 +9,8 @@ from pydantic import ValidationError
 from harbor.core.backtest_config import (
     BacktestConfig,
     CostConfig,
+    FillConfig,
+    FillRule,
     MarketQuota,
     RebalanceFrequency,
     RiskConfig,
@@ -44,6 +46,7 @@ class DefaultsTests(unittest.TestCase):
         self.assertEqual(config.cost.lot_size, 100)
         self.assertEqual(config.risk.max_position_pct, 0.2)
         self.assertEqual(config.risk.min_cash_pct, 0.0)
+        self.assertEqual(config.fill.fill_rule, FillRule.CLOSE)
 
 
 class DateRangeTests(unittest.TestCase):
@@ -111,6 +114,27 @@ class MarketAndQuotaTests(unittest.TestCase):
     def test_empty_markets_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValidationError, "At least one market"):
             _valid_config(markets=())
+
+
+class FillConfigTests(unittest.TestCase):
+    """Verify the fill-rule configuration (SP 2.39)."""
+
+    def test_default_rule_is_close(self) -> None:
+        config = _valid_config()
+        self.assertEqual(config.fill.fill_rule, FillRule.CLOSE)
+
+    def test_custom_fill_rule(self) -> None:
+        config = _valid_config(fill=FillConfig(fill_rule=FillRule.NEXT_OPEN))
+        self.assertEqual(config.fill.fill_rule, FillRule.NEXT_OPEN)
+
+    def test_invalid_fill_rule_is_rejected(self) -> None:
+        with self.assertRaises(ValidationError):
+            FillConfig(fill_rule="at-open")
+
+    def test_fill_rule_changes_canonical_json(self) -> None:
+        close = _valid_config(fill=FillConfig(fill_rule=FillRule.CLOSE))
+        open_cfg = _valid_config(fill=FillConfig(fill_rule=FillRule.OPEN))
+        self.assertNotEqual(close.canonical_json(), open_cfg.canonical_json())
 
 
 class FieldValidationTests(unittest.TestCase):

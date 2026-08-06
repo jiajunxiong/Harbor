@@ -30,6 +30,19 @@ class RebalanceFrequency(StrEnum):
     ANNUAL = "annual"
 
 
+class FillRule(StrEnum):
+    """When an order is filled relative to the quote bar (SP 2.39).
+
+    ``OPEN`` fills at the same-day open, ``CLOSE`` at the same-day close and
+    ``NEXT_OPEN`` at the next trading day's open (e.g. for decisions made after
+    the close). The rule is fixed in the configuration so a run is replayable.
+    """
+
+    OPEN = "open"
+    CLOSE = "close"
+    NEXT_OPEN = "next_open"
+
+
 class MarketQuota(BaseModel):
     """Per-market participation: target holdings count and portfolio weight.
 
@@ -74,6 +87,20 @@ class RiskConfig(BaseModel):
     min_cash_pct: float = Field(default=0.0, ge=0, lt=1, description="最小现金比例")
 
 
+class FillConfig(BaseModel):
+    """Execution timing for fills (SP 2.39).
+
+    ``fill_rule`` picks which price bar fills orders: the same-day open, the
+    same-day close, or the next trading day's open. The rule is part of the
+    validated configuration (and therefore of the run hash, SP 2.5) so the
+    execution timing of a run is fixed and replayable.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    fill_rule: FillRule = Field(default=FillRule.CLOSE, description="成交时点规则")
+
+
 class BacktestConfig(BaseModel):
     """Validated, immutable configuration for one backtest run."""
 
@@ -94,6 +121,7 @@ class BacktestConfig(BaseModel):
     initial_capital: float = Field(default=1_000_000.0, gt=0)
     cost: CostConfig = Field(default_factory=CostConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)
+    fill: FillConfig = Field(default_factory=FillConfig)
 
     @model_validator(mode="after")
     def _validate_date_range(self) -> "BacktestConfig":
