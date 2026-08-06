@@ -43,6 +43,7 @@ src/harbor/core/point_in_time.py
 src/harbor/core/quality_checks.py
 src/harbor/core/quality_policy.py
 src/harbor/core/quality_report.py
+src/harbor/core/rebalance_schedule.py
 src/harbor/core/recalculation.py
 src/harbor/core/review_queue.py
 src/harbor/core/selection_report.py
@@ -114,6 +115,7 @@ tests/test_provider_switch.py
 tests/test_quality_checks.py
 tests/test_quality_policy.py
 tests/test_quality_report.py
+tests/test_rebalance_schedule.py
 tests/test_recalculation.py
 tests/test_reconciliation.py
 tests/test_repositories.py
