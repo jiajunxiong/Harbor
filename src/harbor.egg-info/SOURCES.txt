@@ -45,6 +45,7 @@ src/harbor/core/quality_policy.py
 src/harbor/core/quality_report.py
 src/harbor/core/recalculation.py
 src/harbor/core/review_queue.py
+src/harbor/core/selection_report.py
 src/harbor/core/stock_pool.py
 src/harbor/core/trading_calendar.py
 src/harbor/core/validation.py
@@ -118,6 +119,7 @@ tests/test_reconciliation.py
 tests/test_repositories.py
 tests/test_research_smoke.py
 tests/test_review_queue.py
+tests/test_selection_report.py
 tests/test_stock_pool.py
 tests/test_survivorship_bias.py
 tests/test_trading_calendar.py
