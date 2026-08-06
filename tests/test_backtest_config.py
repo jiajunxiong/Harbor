@@ -14,6 +14,8 @@ from harbor.core.backtest_config import (
     MarketQuota,
     RebalanceFrequency,
     RiskConfig,
+    SuspensionConfig,
+    SuspensionValuation,
     UnfilledPolicy,
     VolumeConfig,
 )
@@ -51,6 +53,8 @@ class DefaultsTests(unittest.TestCase):
         self.assertEqual(config.fill.fill_rule, FillRule.CLOSE)
         self.assertEqual(config.volume.participation_rate, 0.1)
         self.assertEqual(config.volume.on_unfilled, UnfilledPolicy.CANCEL)
+        self.assertEqual(config.suspension.valuation, SuspensionValuation.LAST_PRICE)
+        self.assertTrue(config.suspension.warn)
 
 
 class DateRangeTests(unittest.TestCase):
@@ -165,6 +169,24 @@ class VolumeConfigTests(unittest.TestCase):
         base = _valid_config(volume=VolumeConfig(participation_rate=0.1))
         capped = _valid_config(volume=VolumeConfig(participation_rate=0.05))
         self.assertNotEqual(base.canonical_json(), capped.canonical_json())
+
+
+class SuspensionConfigTests(unittest.TestCase):
+    """Verify the suspension configuration (SP 2.41)."""
+
+    def test_custom_suspension_config(self) -> None:
+        config = _valid_config(suspension=SuspensionConfig(warn=False))
+        self.assertEqual(config.suspension.valuation, SuspensionValuation.LAST_PRICE)
+        self.assertFalse(config.suspension.warn)
+
+    def test_invalid_valuation_is_rejected(self) -> None:
+        with self.assertRaises(ValidationError):
+            SuspensionConfig(valuation="mark_to_market")
+
+    def test_suspension_config_changes_canonical_json(self) -> None:
+        base = _valid_config(suspension=SuspensionConfig(warn=True))
+        silent = _valid_config(suspension=SuspensionConfig(warn=False))
+        self.assertNotEqual(base.canonical_json(), silent.canonical_json())
 
 
 class FieldValidationTests(unittest.TestCase):

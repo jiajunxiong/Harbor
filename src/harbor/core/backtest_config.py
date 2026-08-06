@@ -55,6 +55,17 @@ class UnfilledPolicy(StrEnum):
     DEFER = "defer"
 
 
+class SuspensionValuation(StrEnum):
+    """How a suspended position is valued (SP 2.41).
+
+    ``LAST_PRICE`` carries the last available close forward while a symbol has
+    no quote for the day. The rule is fixed in the configuration so a run is
+    replayable.
+    """
+
+    LAST_PRICE = "last_price"
+
+
 class MarketQuota(BaseModel):
     """Per-market participation: target holdings count and portfolio weight.
 
@@ -129,6 +140,24 @@ class VolumeConfig(BaseModel):
     on_unfilled: UnfilledPolicy = Field(default=UnfilledPolicy.CANCEL, description="未成交处理")
 
 
+class SuspensionConfig(BaseModel):
+    """Suspension / untradeable handling (SP 2.41).
+
+    ``valuation`` is the explicit rule for valuing a position whose symbol has
+    no quote for the day: the last available close is carried forward
+    (``LAST_PRICE``). ``warn`` controls whether a carry-forward valuation
+    produces a warning. The rule is part of the validated configuration (and
+    therefore of the run hash, SP 2.5) so suspension handling is replayable.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    valuation: SuspensionValuation = Field(
+        default=SuspensionValuation.LAST_PRICE, description="停牌估值规则"
+    )
+    warn: bool = Field(default=True, description="停牌估值是否产生告警")
+
+
 class BacktestConfig(BaseModel):
     """Validated, immutable configuration for one backtest run."""
 
@@ -151,6 +180,7 @@ class BacktestConfig(BaseModel):
     risk: RiskConfig = Field(default_factory=RiskConfig)
     fill: FillConfig = Field(default_factory=FillConfig)
     volume: VolumeConfig = Field(default_factory=VolumeConfig)
+    suspension: SuspensionConfig = Field(default_factory=SuspensionConfig)
 
     @model_validator(mode="after")
     def _validate_date_range(self) -> "BacktestConfig":
