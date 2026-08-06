@@ -128,3 +128,39 @@ def compute_equity_entitlement(
             }
         )
     return rows
+
+
+def compute_entitlement(
+    market: MarketTarget,
+    symbol: str,
+    quantity: float,
+    event: EntitlementEvent,
+) -> tuple[float, float]:
+    """Return the entitled quantity and cash amount for one event (SP 2.44).
+
+    Reuses the same market-allowance validation and entitlement math as
+    :func:`compute_equity_entitlement`, without the snapshot-date check: the
+    backtest corporate-action layer (SP 2.44) applies an event to a position it
+    already knows was held at the record date, and the orchestration layer
+    (SP 2.47) handles event timing.
+
+    Args:
+        market: The market the position belongs to.
+        symbol: The security symbol.
+        quantity: The number of shares held.
+        event: The corporate action to apply.
+
+    Returns:
+        A tuple ``(entitled_quantity, cash_amount)``.
+
+    Raises:
+        ValueError: If the event's action type is invalid for the market, the
+            event lacks required terms, or ``quantity`` is negative.
+    """
+    allowed = allowed_action_types(market)
+    if event.action_type not in allowed:
+        raise ValueError(
+            f"Corporate action type {event.action_type.value!r} is not supported for "
+            f"{market.value}."
+        )
+    return _entitlement_for(event.action_type, event.terms, quantity)
