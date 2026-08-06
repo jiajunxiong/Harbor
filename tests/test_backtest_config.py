@@ -14,6 +14,8 @@ from harbor.core.backtest_config import (
     MarketQuota,
     RebalanceFrequency,
     RiskConfig,
+    UnfilledPolicy,
+    VolumeConfig,
 )
 from harbor.core.backtest_domain import Currency, Market
 
@@ -47,6 +49,8 @@ class DefaultsTests(unittest.TestCase):
         self.assertEqual(config.risk.max_position_pct, 0.2)
         self.assertEqual(config.risk.min_cash_pct, 0.0)
         self.assertEqual(config.fill.fill_rule, FillRule.CLOSE)
+        self.assertEqual(config.volume.participation_rate, 0.1)
+        self.assertEqual(config.volume.on_unfilled, UnfilledPolicy.CANCEL)
 
 
 class DateRangeTests(unittest.TestCase):
@@ -135,6 +139,32 @@ class FillConfigTests(unittest.TestCase):
         close = _valid_config(fill=FillConfig(fill_rule=FillRule.CLOSE))
         open_cfg = _valid_config(fill=FillConfig(fill_rule=FillRule.OPEN))
         self.assertNotEqual(close.canonical_json(), open_cfg.canonical_json())
+
+
+class VolumeConfigTests(unittest.TestCase):
+    """Verify the volume-participation configuration (SP 2.40)."""
+
+    def test_custom_volume_config(self) -> None:
+        config = _valid_config(
+            volume=VolumeConfig(participation_rate=0.05, on_unfilled=UnfilledPolicy.DEFER)
+        )
+        self.assertEqual(config.volume.participation_rate, 0.05)
+        self.assertEqual(config.volume.on_unfilled, UnfilledPolicy.DEFER)
+
+    def test_rate_out_of_range_is_rejected(self) -> None:
+        with self.assertRaises(ValidationError):
+            VolumeConfig(participation_rate=1.5)
+        with self.assertRaises(ValidationError):
+            VolumeConfig(participation_rate=-0.1)
+
+    def test_invalid_policy_is_rejected(self) -> None:
+        with self.assertRaises(ValidationError):
+            VolumeConfig(on_unfilled="postpone")
+
+    def test_volume_config_changes_canonical_json(self) -> None:
+        base = _valid_config(volume=VolumeConfig(participation_rate=0.1))
+        capped = _valid_config(volume=VolumeConfig(participation_rate=0.05))
+        self.assertNotEqual(base.canonical_json(), capped.canonical_json())
 
 
 class FieldValidationTests(unittest.TestCase):

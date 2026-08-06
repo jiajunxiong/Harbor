@@ -56,6 +56,7 @@ src/harbor/core/stock_pool.py
 src/harbor/core/target_weight.py
 src/harbor/core/trading_calendar.py
 src/harbor/core/validation.py
+src/harbor/core/volume_limit.py
 src/harbor/infrastructure/__init__.py
 src/harbor/infrastructure/data_providers/__init__.py
 src/harbor/infrastructure/data_providers/akshare.py
@@ -138,5 +139,6 @@ tests/test_survivorship_bias.py
 tests/test_target_weight.py
 tests/test_trading_calendar.py
 tests/test_validation.py
+tests/test_volume_limit.py
 tests/test_yfinance_contract.py
 tests/test_yfinance_providers.py

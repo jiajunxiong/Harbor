@@ -43,6 +43,18 @@ class FillRule(StrEnum):
     NEXT_OPEN = "next_open"
 
 
+class UnfilledPolicy(StrEnum):
+    """How an order that cannot fully fill is handled (SP 2.40).
+
+    ``CANCEL`` drops the unfilled portion; ``DEFER`` carries it to the next
+    trading day. The policy is fixed in the configuration so a run is
+    replayable.
+    """
+
+    CANCEL = "cancel"
+    DEFER = "defer"
+
+
 class MarketQuota(BaseModel):
     """Per-market participation: target holdings count and portfolio weight.
 
@@ -101,6 +113,22 @@ class FillConfig(BaseModel):
     fill_rule: FillRule = Field(default=FillRule.CLOSE, description="成交时点规则")
 
 
+class VolumeConfig(BaseModel):
+    """Volume-participation constraint on fills (SP 2.40).
+
+    ``participation_rate`` caps the value an order may consume as a fraction of
+    the day's traded value (price x volume); ``on_unfilled`` decides whether an
+    order that cannot fully fill is cancelled or deferred to the next trading
+    day. The rule is part of the validated configuration (and therefore of the
+    run hash, SP 2.5) so execution is fixed and replayable.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    participation_rate: float = Field(default=0.1, ge=0, le=1, description="成交额参与率")
+    on_unfilled: UnfilledPolicy = Field(default=UnfilledPolicy.CANCEL, description="未成交处理")
+
+
 class BacktestConfig(BaseModel):
     """Validated, immutable configuration for one backtest run."""
 
@@ -122,6 +150,7 @@ class BacktestConfig(BaseModel):
     cost: CostConfig = Field(default_factory=CostConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)
     fill: FillConfig = Field(default_factory=FillConfig)
+    volume: VolumeConfig = Field(default_factory=VolumeConfig)
 
     @model_validator(mode="after")
     def _validate_date_range(self) -> "BacktestConfig":
