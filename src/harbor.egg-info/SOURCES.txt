@@ -20,6 +20,7 @@ src/harbor/core/backtest_config.py
 src/harbor/core/backtest_config_loader.py
 src/harbor/core/backtest_domain.py
 src/harbor/core/backtest_interfaces.py
+src/harbor/core/candidate_filter.py
 src/harbor/core/data_readiness.py
 src/harbor/core/equity.py
 src/harbor/core/factor_alignment.py
@@ -66,6 +67,7 @@ tests/test_backtest_dependencies.py
 tests/test_backtest_domain.py
 tests/test_backtest_interfaces.py
 tests/test_backtest_repositories.py
+tests/test_candidate_filter.py
 tests/test_cli.py
 tests/test_config.py
 tests/test_corporate_action_checks.py
