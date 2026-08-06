@@ -23,6 +23,7 @@ src/harbor/core/backtest_interfaces.py
 src/harbor/core/candidate_filter.py
 src/harbor/core/concentration.py
 src/harbor/core/cost_hk.py
+src/harbor/core/cost_us.py
 src/harbor/core/cross_market_merge.py
 src/harbor/core/data_readiness.py
 src/harbor/core/equity.py
@@ -83,6 +84,7 @@ tests/test_concentration.py
 tests/test_config.py
 tests/test_corporate_action_checks.py
 tests/test_cost_hk.py
+tests/test_cost_us.py
 tests/test_coverage_checks.py
 tests/test_cross_market_merge.py
 tests/test_data_readiness.py
