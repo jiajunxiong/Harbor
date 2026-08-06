@@ -90,6 +90,7 @@ tests/test_factor_earnings_quality.py
 tests/test_factor_scoring.py
 tests/test_factor_snapshot.py
 tests/test_factor_standardization.py
+tests/test_factor_unit_suite.py
 tests/test_factor_volatility.py
 tests/test_financial_checks.py
 tests/test_fx.py
