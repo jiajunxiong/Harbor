@@ -198,6 +198,23 @@ def deposit(ledger: Ledger, *, currency: Currency, amount: float, base_rate: flo
     )
 
 
+def credit(ledger: Ledger, *, currency: Currency, amount: float) -> Ledger:
+    """Credit cash in ``currency`` without an FX conversion (SP 2.43).
+
+    Used for cash inflows that carry no explicit conversion rate, such as
+    dividend payments: the balance grows but the acquisition rate is unchanged
+    (matching the fill convention, where cash also arrives without a rate).
+
+    Raises:
+        ValueError: If ``amount`` is not positive.
+    """
+    if amount <= 0:
+        raise ValueError("Credit amount must be positive.")
+    cash = _cash_map(ledger)
+    cash[currency] = cash.get(currency, 0.0) + amount
+    return replace(ledger, cash=_cash_tuple(cash))
+
+
 def apply_fill(ledger: Ledger, *, fill: Fill) -> Ledger:
     """Apply a fill to the ledger (SP 2.42).
 

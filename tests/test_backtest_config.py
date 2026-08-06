@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from harbor.core.backtest_config import (
     BacktestConfig,
     CostConfig,
+    DividendConfig,
     FillConfig,
     FillRule,
     MarketQuota,
@@ -55,6 +56,7 @@ class DefaultsTests(unittest.TestCase):
         self.assertEqual(config.volume.on_unfilled, UnfilledPolicy.CANCEL)
         self.assertEqual(config.suspension.valuation, SuspensionValuation.LAST_PRICE)
         self.assertTrue(config.suspension.warn)
+        self.assertTrue(config.dividend.include_special)
 
 
 class DateRangeTests(unittest.TestCase):
@@ -187,6 +189,19 @@ class SuspensionConfigTests(unittest.TestCase):
         base = _valid_config(suspension=SuspensionConfig(warn=True))
         silent = _valid_config(suspension=SuspensionConfig(warn=False))
         self.assertNotEqual(base.canonical_json(), silent.canonical_json())
+
+
+class DividendConfigTests(unittest.TestCase):
+    """Verify the dividend configuration (SP 2.43)."""
+
+    def test_custom_dividend_config(self) -> None:
+        config = _valid_config(dividend=DividendConfig(include_special=False))
+        self.assertFalse(config.dividend.include_special)
+
+    def test_dividend_config_changes_canonical_json(self) -> None:
+        base = _valid_config(dividend=DividendConfig(include_special=True))
+        regular_only = _valid_config(dividend=DividendConfig(include_special=False))
+        self.assertNotEqual(base.canonical_json(), regular_only.canonical_json())
 
 
 class FieldValidationTests(unittest.TestCase):

@@ -17,6 +17,7 @@ from harbor.core.ledger import (
     Ledger,
     apply_fill,
     convert,
+    credit,
     deposit,
     empty_ledger,
 )
@@ -144,6 +145,30 @@ class ApplyFillTests(unittest.TestCase):
         original = deposit(_ledger(), currency=HKD, amount=10_000.0, base_rate=1.0)
         apply_fill(original, fill=_fill(side=_BUY, quantity=100.0, price=10.0, fee=5.0))
         self.assertAlmostEqual(original.balance(HKD), 10_000.0)
+
+
+class CreditTests(unittest.TestCase):
+    """Verify cash credits that carry no explicit conversion rate (SP 2.43)."""
+
+    def test_credit_adds_cash_without_touching_acquisition_rate(self) -> None:
+        ledger = deposit(_ledger(), currency=USD, amount=1_000.0, base_rate=7.8)
+        ledger = credit(ledger, currency=USD, amount=500.0)
+        self.assertAlmostEqual(ledger.balance(USD), 1_500.0)
+        self.assertAlmostEqual(ledger.acquisition_rate(USD), 7.8)
+
+    def test_credit_base_currency(self) -> None:
+        ledger = deposit(_ledger(), currency=HKD, amount=1_000.0, base_rate=1.0)
+        ledger = credit(ledger, currency=HKD, amount=200.0)
+        self.assertAlmostEqual(ledger.balance(HKD), 1_200.0)
+
+    def test_credit_rejects_non_positive_amount(self) -> None:
+        with self.assertRaisesRegex(ValueError, "amount"):
+            credit(_ledger(), currency=HKD, amount=0.0)
+
+    def test_credit_is_immutable(self) -> None:
+        original = _ledger()
+        credit(original, currency=HKD, amount=100.0)
+        self.assertEqual(original.balance(HKD), 0.0)
 
 
 class ConvertTests(unittest.TestCase):

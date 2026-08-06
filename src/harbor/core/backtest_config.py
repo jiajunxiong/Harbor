@@ -158,6 +158,21 @@ class SuspensionConfig(BaseModel):
     warn: bool = Field(default=True, description="停牌估值是否产生告警")
 
 
+class DividendConfig(BaseModel):
+    """Dividend processing (SP 2.43).
+
+    ``include_special`` controls whether special dividends (``is_special``)
+    are paid into the ledger; special dividends follow the strategy
+    configuration (特别股息遵循策略配置). The rule is part of the validated
+    configuration (and therefore of the run hash, SP 2.5) so dividend handling
+    is replayable.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    include_special: bool = Field(default=True, description="特别股息是否计入账本")
+
+
 class BacktestConfig(BaseModel):
     """Validated, immutable configuration for one backtest run."""
 
@@ -181,6 +196,7 @@ class BacktestConfig(BaseModel):
     fill: FillConfig = Field(default_factory=FillConfig)
     volume: VolumeConfig = Field(default_factory=VolumeConfig)
     suspension: SuspensionConfig = Field(default_factory=SuspensionConfig)
+    dividend: DividendConfig = Field(default_factory=DividendConfig)
 
     @model_validator(mode="after")
     def _validate_date_range(self) -> "BacktestConfig":
