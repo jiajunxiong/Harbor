@@ -6,12 +6,14 @@ from typing import Any
 
 from sqlalchemy.dialects import postgresql
 
-from harbor.core.backtest_domain import BacktestStatus
+from harbor.core.backtest_domain import BacktestStatus, Market
+from harbor.core.factor_snapshot import FactorSnapshotInput, build_factor_snapshot
 from harbor.storage.backtest_repositories import (
     _BACKTEST_STATUSES,
     BacktestRepository,
 )
 from harbor.storage.models import (
+    BacktestFactorSnapshot,
     BacktestFill,
     BacktestMetric,
     BacktestNetValue,
@@ -112,6 +114,7 @@ class BacktestResultRepositoryTests(unittest.TestCase):
             BacktestRebalance,
             BacktestMetric,
             BacktestRejectedTrade,
+            BacktestFactorSnapshot,
         )
         for model in models:
             references = {fk.column.table.name for fk in model.__table__.foreign_keys}
@@ -191,6 +194,20 @@ class BacktestResultRepositoryTests(unittest.TestCase):
                     "order_ref": None,
                 }
             ],
+            BacktestFactorSnapshot: [
+                {
+                    "market": "HK",
+                    "symbol": "0005.HK",
+                    "as_of_date": date(2026, 8, 5),
+                    "raw_values": {"dividend_yield": 0.05},
+                    "availability_dates": {"price": "2026-08-04"},
+                    "standardized_scores": {"dividend_yield": 0.9},
+                    "composite_score": 0.9,
+                    "rank": 1,
+                    "selected": True,
+                    "exclusion_reason": None,
+                }
+            ],
         }
         for model, rows in rows_by_model.items():
             statement = self.repository._insert_results_statement(model, "run-001", rows)
@@ -247,6 +264,80 @@ class BacktestResultRepositoryTests(unittest.TestCase):
         sql = str(statement.compile(dialect=postgresql.dialect()))
         self.assertIn("FROM backtest_rejected_trades", sql)
         self.assertIn("backtest_rejected_trades.market = %(market_1)s", sql)
+
+
+class FactorSnapshotRepositoryTests(unittest.TestCase):
+    """Verify the factor snapshot persistence (MVP 2 / SP 2.28)."""
+
+    def setUp(self) -> None:
+        self.repository = BacktestRepository(connection=object())  # type: ignore[arg-type]
+        self.snapshot = build_factor_snapshot(
+            date(2026, 3, 31),
+            [
+                FactorSnapshotInput(
+                    market=Market.HK,
+                    symbol="0005.HK",
+                    raw_values={"dividend_yield": 0.05, "volatility": 0.2},
+                    availability_dates={"price": date(2026, 3, 30)},
+                    standardized_scores={"dividend_yield": 0.9},
+                    composite_score=0.75,
+                    rank=1,
+                    selected=True,
+                ),
+                FactorSnapshotInput(
+                    market=Market.US,
+                    symbol="AAPL",
+                    raw_values={"dividend_yield": None},
+                    availability_dates={"price": date(2026, 3, 30)},
+                    standardized_scores={"dividend_yield": None},
+                    composite_score=None,
+                    rank=None,
+                    selected=False,
+                    exclusion_reason="insufficient history",
+                ),
+            ],
+        )
+
+    def test_rows_filter_by_market_and_serialize_dates(self) -> None:
+        rows = self.repository._factor_snapshot_rows("HK", self.snapshot)
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["market"], "HK")
+        self.assertEqual(row["symbol"], "0005.HK")
+        self.assertEqual(row["as_of_date"], date(2026, 3, 31))
+        self.assertEqual(row["raw_values"], {"dividend_yield": 0.05, "volatility": 0.2})
+        # Availability dates are serialized to ISO strings for JSONB.
+        self.assertEqual(row["availability_dates"], {"price": "2026-03-30"})
+        self.assertEqual(row["standardized_scores"], {"dividend_yield": 0.9})
+        self.assertEqual(row["composite_score"], 0.75)
+        self.assertEqual(row["rank"], 1)
+        self.assertTrue(row["selected"])
+        self.assertIsNone(row["exclusion_reason"])
+
+    def test_rows_keep_us_entries_under_us_market(self) -> None:
+        rows = self.repository._factor_snapshot_rows("US", self.snapshot)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["symbol"], "AAPL")
+        self.assertEqual(rows[0]["composite_score"], None)
+        self.assertEqual(rows[0]["exclusion_reason"], "insufficient history")
+
+    def test_insert_statement_targets_factor_snapshots_table(self) -> None:
+        rows = self.repository._factor_snapshot_rows("HK", self.snapshot)
+        statement = self.repository._insert_results_statement(
+            BacktestFactorSnapshot, "run-001", rows
+        )
+        assert statement is not None
+        compiled = statement.compile(dialect=postgresql.dialect())
+        self.assertIn("INSERT INTO backtest_factor_snapshots", compiled.string)
+        self.assertIn("backtest_run_id", compiled.string)
+        self.assertIn("run-001", compiled.params.values())
+
+    def test_list_factor_snapshots_filters_by_run_and_market(self) -> None:
+        statement = self.repository.list_factor_snapshots("HK", "run-001")
+        sql = str(statement.compile(dialect=postgresql.dialect()))
+        self.assertIn("FROM backtest_factor_snapshots", sql)
+        self.assertIn("backtest_factor_snapshots.backtest_run_id = %(backtest_run_id_1)s", sql)
+        self.assertIn("backtest_factor_snapshots.market = %(market_1)s", sql)
 
 
 if __name__ == "__main__":

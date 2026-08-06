@@ -576,6 +576,51 @@ class BacktestRejectedTrade(Base):
     order_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
+class BacktestFactorSnapshot(Base):
+    """A per-symbol factor snapshot for one rebalance (MVP 2 / SP 2.28).
+
+    Captures, for every symbol considered at a rebalance, the raw factor
+    values, each input's availability date, the standardized scores, the
+    composite score, the within-market rank/selection and the exclusion reason
+    (SP 2.23). The JSONB columns store JSON-compatible objects, so dates are
+    serialized as ISO strings.
+    """
+
+    __tablename__ = "backtest_factor_snapshots"
+    __table_args__ = (
+        CheckConstraint(
+            "market IN ('HK', 'US')",
+            name="ck_backtest_factor_snapshots_market",
+        ),
+        ForeignKeyConstraint(
+            ["backtest_run_id"],
+            ["backtest_runs.run_id"],
+            name="fk_backtest_factor_snapshots_run",
+        ),
+        UniqueConstraint(
+            "backtest_run_id",
+            "market",
+            "symbol",
+            "as_of_date",
+            name="uq_backtest_factor_snapshots_symbol",
+        ),
+        Index("ix_backtest_factor_snapshots_run_date", "backtest_run_id", "as_of_date"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    backtest_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    market: Mapped[str] = mapped_column(String(2), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
+    raw_values: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    availability_dates: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    standardized_scores: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    composite_score: Mapped[float | None] = mapped_column(Numeric(20, 6), nullable=True)
+    rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    selected: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    exclusion_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
 v_quality_summary_hk = Table(
     "v_quality_summary_hk",
     Base.metadata,

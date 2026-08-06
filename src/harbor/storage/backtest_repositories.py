@@ -18,7 +18,9 @@ from sqlalchemy import Connection, Insert, Select, Table, Update, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from harbor.core.backtest_domain import BacktestStatus
+from harbor.core.factor_snapshot import FactorSnapshot
 from harbor.storage.models import (
+    BacktestFactorSnapshot,
     BacktestFill,
     BacktestMetric,
     BacktestNetValue,
@@ -255,4 +257,54 @@ class BacktestRepository:
         return select(BacktestRejectedTrade).where(
             BacktestRejectedTrade.backtest_run_id == run_id,
             BacktestRejectedTrade.market == market,
+        )
+
+    @staticmethod
+    def _factor_snapshot_rows(
+        market: str,
+        snapshot: FactorSnapshot,
+    ) -> list[dict[str, Any]]:
+        """Convert a core snapshot's entries for ``market`` into row mappings.
+
+        Only entries whose market matches ``market`` are included. Availability
+        dates are serialized to ISO strings because the JSONB columns store
+        JSON-compatible objects (SP 2.28).
+        """
+        rows: list[dict[str, Any]] = []
+        for entry in snapshot.entries:
+            if entry.market.value != market:
+                continue
+            rows.append(
+                {
+                    "market": market,
+                    "symbol": entry.symbol,
+                    "as_of_date": snapshot.as_of,
+                    "raw_values": dict(entry.raw_values),
+                    "availability_dates": {
+                        name: day.isoformat() for name, day in entry.availability_dates
+                    },
+                    "standardized_scores": dict(entry.standardized_scores),
+                    "composite_score": entry.composite_score,
+                    "rank": entry.rank,
+                    "selected": entry.selected,
+                    "exclusion_reason": entry.exclusion_reason,
+                }
+            )
+        return rows
+
+    def insert_factor_snapshot(self, market: str, run_id: str, snapshot: FactorSnapshot) -> int:
+        """Record a rebalance's factor snapshot for a run and market (SP 2.28).
+
+        Persists one row per symbol considered at the rebalance (raw values,
+        availability dates, standardized scores, composite score, rank,
+        selection and exclusion reason), all tagged with ``run_id``.
+        """
+        rows = self._factor_snapshot_rows(market, snapshot)
+        return self._insert_results(BacktestFactorSnapshot, run_id, rows)
+
+    def list_factor_snapshots(self, market: str, run_id: str) -> Select[Any]:
+        """Return a market- and run-scoped factor snapshot query (SP 2.28)."""
+        return select(BacktestFactorSnapshot).where(
+            BacktestFactorSnapshot.backtest_run_id == run_id,
+            BacktestFactorSnapshot.market == market,
         )
