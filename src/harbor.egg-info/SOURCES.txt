@@ -118,6 +118,7 @@ tests/test_repositories.py
 tests/test_research_smoke.py
 tests/test_review_queue.py
 tests/test_stock_pool.py
+tests/test_survivorship_bias.py
 tests/test_trading_calendar.py
 tests/test_validation.py
 tests/test_yfinance_contract.py
