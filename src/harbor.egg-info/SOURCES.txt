@@ -99,6 +99,7 @@ tests/test_ingestion.py
 tests/test_integration.py
 tests/test_interfaces.py
 tests/test_logging.py
+tests/test_lookahead_protection.py
 tests/test_market_registry.py
 tests/test_market_selector.py
 tests/test_migrations.py
