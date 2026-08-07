@@ -20,6 +20,7 @@ src/harbor/core/backtest_config.py
 src/harbor/core/backtest_config_loader.py
 src/harbor/core/backtest_domain.py
 src/harbor/core/backtest_interfaces.py
+src/harbor/core/backtest_state_machine.py
 src/harbor/core/candidate_filter.py
 src/harbor/core/concentration.py
 src/harbor/core/corporate_actions.py
@@ -85,6 +86,7 @@ tests/test_backtest_dependencies.py
 tests/test_backtest_domain.py
 tests/test_backtest_interfaces.py
 tests/test_backtest_repositories.py
+tests/test_backtest_state_machine.py
 tests/test_candidate_filter.py
 tests/test_cli.py
 tests/test_concentration.py
