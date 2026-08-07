@@ -173,6 +173,67 @@ class DividendConfig(BaseModel):
     include_special: bool = Field(default=True, description="特别股息是否计入账本")
 
 
+class BenchmarkKind(StrEnum):
+    """The kind of benchmark a run is compared against (SP 2.52)."""
+
+    CASH = "cash"
+    MARKET_INDEX = "market_index"
+    BLENDED = "blended"
+
+
+class BenchmarkComponent(BaseModel):
+    """One market-index leg of a blended benchmark (SP 2.52).
+
+    ``weight`` is the component's share of the blended benchmark; the weights
+    across all components plus the blended cash weight must sum to 1.0.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    market: Market
+    symbol: str
+    weight: float = Field(gt=0, le=1, description="该分项在混合基准中的权重")
+
+
+class BenchmarkConfig(BaseModel):
+    """Benchmark definition (SP 2.52): cash, a single market index, or a blend.
+
+    ``kind`` selects the benchmark; ``market``/``symbol`` identify the index
+    for :attr:`BenchmarkKind.MARKET_INDEX`; ``components`` (plus the optional
+    ``cash_weight``) define a blended benchmark. The definition is frozen and
+    part of the run hash (SP 2.5), so a run is compared against a fixed,
+    replayable benchmark.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: BenchmarkKind = BenchmarkKind.CASH
+    market: Market | None = None
+    symbol: str = ""
+    cash_weight: float = Field(default=0.0, ge=0, lt=1, description="混合基准中的现金权重")
+    components: tuple[BenchmarkComponent, ...] = ()
+
+    @model_validator(mode="after")
+    def _validate_kind(self) -> "BenchmarkConfig":
+        if self.kind is BenchmarkKind.MARKET_INDEX:
+            if self.market is None or not self.symbol:
+                raise ValueError("A market-index benchmark requires a market and symbol.")
+            if self.components or self.cash_weight != 0.0:
+                raise ValueError("A market-index benchmark cannot carry components or cash weight.")
+        elif self.kind is BenchmarkKind.CASH:
+            if self.market is not None or self.symbol or self.components or self.cash_weight != 0.0:
+                raise ValueError("A cash benchmark cannot carry index or component data.")
+        else:  # BLENDED
+            if self.market is not None or self.symbol:
+                raise ValueError("A blended benchmark cannot carry a single market/symbol.")
+            if not self.components:
+                raise ValueError("A blended benchmark requires at least one component.")
+            total = self.cash_weight + sum(component.weight for component in self.components)
+            if abs(total - 1.0) > _WEIGHT_TOLERANCE:
+                raise ValueError("Blended benchmark weights (cash + components) must sum to 1.0.")
+        return self
+
+
 class BacktestConfig(BaseModel):
     """Validated, immutable configuration for one backtest run."""
 
@@ -197,6 +258,7 @@ class BacktestConfig(BaseModel):
     volume: VolumeConfig = Field(default_factory=VolumeConfig)
     suspension: SuspensionConfig = Field(default_factory=SuspensionConfig)
     dividend: DividendConfig = Field(default_factory=DividendConfig)
+    benchmark: BenchmarkConfig = Field(default_factory=BenchmarkConfig)
 
     @model_validator(mode="after")
     def _validate_date_range(self) -> "BacktestConfig":
