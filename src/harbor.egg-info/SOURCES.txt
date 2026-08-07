@@ -94,6 +94,7 @@ tests/test_candidate_filter.py
 tests/test_cli.py
 tests/test_concentration.py
 tests/test_config.py
+tests/test_corporate_action_backtest.py
 tests/test_corporate_action_checks.py
 tests/test_corporate_actions.py
 tests/test_cost_calendar_suite.py
