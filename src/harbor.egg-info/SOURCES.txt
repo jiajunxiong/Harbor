@@ -96,6 +96,7 @@ tests/test_concentration.py
 tests/test_config.py
 tests/test_corporate_action_checks.py
 tests/test_corporate_actions.py
+tests/test_cost_calendar_suite.py
 tests/test_cost_hk.py
 tests/test_cost_us.py
 tests/test_coverage_checks.py
