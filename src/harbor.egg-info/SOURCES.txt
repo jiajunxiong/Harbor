@@ -61,6 +61,7 @@ src/harbor/core/quality_policy.py
 src/harbor/core/quality_report.py
 src/harbor/core/rebalance_schedule.py
 src/harbor/core/recalculation.py
+src/harbor/core/result_export.py
 src/harbor/core/review_queue.py
 src/harbor/core/run_identity.py
 src/harbor/core/selection_report.py
@@ -160,6 +161,7 @@ tests/test_recalculation.py
 tests/test_reconciliation.py
 tests/test_repositories.py
 tests/test_research_smoke.py
+tests/test_result_export.py
 tests/test_review_queue.py
 tests/test_run_identity.py
 tests/test_selection_report.py
