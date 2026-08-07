@@ -32,6 +32,7 @@ src/harbor/core/cost_us.py
 src/harbor/core/cross_market_merge.py
 src/harbor/core/data_readiness.py
 src/harbor/core/dividend_processing.py
+src/harbor/core/drawdown_events.py
 src/harbor/core/equity.py
 src/harbor/core/exposure.py
 src/harbor/core/factor_alignment.py
@@ -112,6 +113,7 @@ tests/test_data_readiness.py
 tests/test_dividend_checks.py
 tests/test_dividend_processing.py
 tests/test_docker_smoke.py
+tests/test_drawdown_events.py
 tests/test_end_to_end_backtest.py
 tests/test_equity.py
 tests/test_equity_events.py
