@@ -21,6 +21,7 @@ src/harbor/core/backtest_config_loader.py
 src/harbor/core/backtest_domain.py
 src/harbor/core/backtest_engine.py
 src/harbor/core/backtest_interfaces.py
+src/harbor/core/backtest_runner.py
 src/harbor/core/backtest_state_machine.py
 src/harbor/core/candidate_filter.py
 src/harbor/core/concentration.py
@@ -106,6 +107,7 @@ tests/test_data_readiness.py
 tests/test_dividend_checks.py
 tests/test_dividend_processing.py
 tests/test_docker_smoke.py
+tests/test_end_to_end_backtest.py
 tests/test_equity.py
 tests/test_equity_events.py
 tests/test_factor_alignment.py
