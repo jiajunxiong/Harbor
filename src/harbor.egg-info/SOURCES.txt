@@ -64,6 +64,7 @@ src/harbor/core/selection_report.py
 src/harbor/core/stock_pool.py
 src/harbor/core/suspension.py
 src/harbor/core/target_weight.py
+src/harbor/core/trade_metrics.py
 src/harbor/core/trading_calendar.py
 src/harbor/core/validation.py
 src/harbor/core/valuation.py
@@ -160,6 +161,7 @@ tests/test_stock_pool.py
 tests/test_survivorship_bias.py
 tests/test_suspension.py
 tests/test_target_weight.py
+tests/test_trade_metrics.py
 tests/test_trading_calendar.py
 tests/test_validation.py
 tests/test_valuation.py
