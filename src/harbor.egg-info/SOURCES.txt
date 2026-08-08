@@ -176,6 +176,7 @@ tests/test_mock_provider.py
 tests/test_models.py
 tests/test_ohlc_checks.py
 tests/test_order_drafts.py
+tests/test_performance_baseline.py
 tests/test_performance_metrics.py
 tests/test_point_in_time.py
 tests/test_provider_factory.py
