@@ -129,8 +129,87 @@ class BacktestRunCliTests(unittest.TestCase):
         with patch.dict(os.environ, self.ENVIRONMENT, clear=True):
             with self.assertRaises(SystemExit) as exit_context:
                 with redirect_stderr(stderr):
-                    main(["backtest", "show", "run-x"])
+                    main(["backtest", "export", "run-x"])
         self.assertEqual(exit_context.exception.code, 2)
+
+
+class FakeShowResult:
+    def __init__(self) -> None:
+        self.to_dict_calls = 0
+
+    def to_dict(self) -> dict:
+        self.to_dict_calls += 1
+        return {
+            "run_id": "run-1",
+            "status": "COMPLETED",
+            "markets": ["US"],
+            "data_range": {"start": "2024-01-02", "end": "2024-01-08", "cutoff": "2024-01-08"},
+            "day_count": 2,
+            "cumulative_return": 0.05,
+            "metrics": {"sharpe": 1.25},
+        }
+
+
+class BacktestShowCliTests(unittest.TestCase):
+    """Verify the ``backtest show`` command surface (SP 2.68)."""
+
+    ENVIRONMENT = {
+        "DATABASE_URL": "postgresql+psycopg://harbor:secret@localhost:5432/harbor",
+        "DATA_PROVIDER_HK": "mock",
+        "DATA_PROVIDER_US": "mock",
+    }
+
+    def test_backtest_show_prints_status_json(self) -> None:
+        from harbor.cli import main
+
+        fake_result = FakeShowResult()
+        output = io.StringIO()
+        with (
+            patch.dict(os.environ, self.ENVIRONMENT, clear=True),
+            patch("harbor.cli.create_engine"),
+            patch("harbor.cli.show_backtest", return_value=fake_result) as show_mock,
+        ):
+            with redirect_stdout(output), redirect_stderr(io.StringIO()):
+                exit_code = main(["backtest", "show", "run-1"])
+
+        self.assertEqual(exit_code, 0)
+        summary = json.loads(output.getvalue())
+        self.assertEqual(summary["run_id"], "run-1")
+        self.assertEqual(summary["status"], "COMPLETED")
+        self.assertEqual(summary["markets"], ["US"])
+        self.assertEqual(summary["day_count"], 2)
+        self.assertEqual(summary["metrics"], {"sharpe": 1.25})
+        show_mock.assert_called_once()
+        self.assertEqual(show_mock.call_args.kwargs["run_id"], "run-1")
+
+    def test_backtest_show_missing_run_id_is_usage_error(self) -> None:
+        from harbor.cli import main
+
+        with patch.dict(os.environ, self.ENVIRONMENT, clear=True):
+            with self.assertRaises(SystemExit) as exit_context:
+                main(["backtest", "show"])
+        self.assertEqual(exit_context.exception.code, 2)
+
+    def test_backtest_show_missing_run_is_actionable_error(self) -> None:
+        from harbor.cli import main
+        from harbor.services.backtest import BacktestShowError
+
+        stderr = io.StringIO()
+        with (
+            patch.dict(os.environ, self.ENVIRONMENT, clear=True),
+            patch("harbor.cli.create_engine"),
+            patch(
+                "harbor.cli.show_backtest",
+                side_effect=BacktestShowError("No backtest run found for run id 'nope'."),
+            ),
+        ):
+            with self.assertRaises(SystemExit) as exit_context:
+                with redirect_stdout(io.StringIO()), redirect_stderr(stderr):
+                    main(["backtest", "show", "nope"])
+
+        self.assertEqual(exit_context.exception.code, 2)
+        self.assertIn("Backtest show failed", stderr.getvalue())
+        self.assertIn("No backtest run found", stderr.getvalue())
 
 
 if __name__ == "__main__":

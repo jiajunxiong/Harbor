@@ -27,7 +27,7 @@ from harbor.infrastructure.data_providers.factory import (
     print_capability_report,
 )
 from harbor.logging import configure_logging, get_logger
-from harbor.services.backtest import run_backtest_from_config
+from harbor.services.backtest import run_backtest_from_config, show_backtest
 from harbor.storage.repositories import Repository
 
 
@@ -109,6 +109,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Data cutoff date (ISO); defaults to the config end date.",
     )
+    show_parser = backtest_subparsers.add_parser(
+        "show", help="Show a backtest run's config, data range, status and core metrics."
+    )
+    show_parser.add_argument("run_id", help="The backtest run id.")
     return parser
 
 
@@ -132,7 +136,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.command == "quality":
         return _show_quality(parser, arguments)
     if arguments.command == "backtest":
-        return _show_backtest_run(parser, arguments)
+        return _show_backtest(parser, arguments)
     parser.error(f"Unsupported command: {arguments.command}")
     return 2
 
@@ -318,6 +322,16 @@ def _show_providers() -> int:
     return 0
 
 
+def _show_backtest(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """Dispatch the backtest subcommands."""
+    if arguments.backtest_command == "run":
+        return _show_backtest_run(parser, arguments)
+    if arguments.backtest_command == "show":
+        return _show_backtest_show(parser, arguments)
+    parser.error(f"Unsupported backtest command: {arguments.backtest_command}")
+    return 2
+
+
 def _show_backtest_run(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
     """Run a backtest from a config file and render the run id and status."""
     if arguments.backtest_command != "run":
@@ -342,6 +356,24 @@ def _show_backtest_run(parser: argparse.ArgumentParser, arguments: argparse.Name
         return 2
     summary = {"run_id": result.run_id, "status": result.status.value}
     sys.stdout.write(f"{json.dumps(summary, sort_keys=True)}\n")
+    return 0
+
+
+def _show_backtest_show(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """Render a backtest run's config, data range, status and core metrics."""
+    try:
+        settings = Settings()  # type: ignore[call-arg]
+    except ValidationError as error:
+        parser.error(f"Invalid configuration: {error}")
+        return 2
+    try:
+        engine = create_engine(settings.database_url)
+        with engine.connect() as connection:
+            result = show_backtest(connection=connection, run_id=arguments.run_id)
+    except (OSError, ValueError) as error:
+        parser.error(f"Backtest show failed: {error}")
+        return 2
+    sys.stdout.write(f"{json.dumps(result.to_dict(), sort_keys=True)}\n")
     return 0
 
 

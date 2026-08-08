@@ -1,10 +1,15 @@
-"""Backtest run service (MVP 2 / SP 2.67).
+"""Backtest run and status service (MVP 2 / SP 2.67–2.68).
 
-Orchestrates a CLI backtest run: loads the versioned strategy configuration
-(SP 2.5), computes the run identity (SP 2.48), creates the run master record
-(SP 2.6), executes the SP 2.47 pipeline over a universe assembled from the
-storage reader (SP 2.51), persists the day-by-day results (SP 2.7) and updates
-the run status (SP 2.6), returning the run id and status.
+Orchestrates a CLI backtest run (SP 2.67): loads the versioned strategy
+configuration (SP 2.5), computes the run identity (SP 2.48), creates the run
+master record (SP 2.6), executes the SP 2.47 pipeline over a universe
+assembled from the storage reader (SP 2.51), persists the day-by-day results
+(SP 2.7) and updates the run status (SP 2.6), returning the run id and status.
+
+Also renders a run's status view (SP 2.68): fetching the persisted run master
+record by id, assembling the SP 2.66 audit (configuration, input range and
+failure reasons) and enriching it with the core metrics derived from the
+persisted net values and metric rows.
 
 The service lives in the orchestration layer: it composes core domain logic
 with the storage repositories and reader, so the CLI command stays thin and
@@ -18,10 +23,12 @@ import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from typing import Protocol
+from types import MappingProxyType
+from typing import Any, Protocol
 
 from sqlalchemy.engine import Connection
 
+from harbor.core.audit_query import RunAudit, RunRecord, build_run_audit
 from harbor.core.backtest_config import BacktestConfig
 from harbor.core.backtest_config_loader import load_backtest_config
 from harbor.core.backtest_domain import BacktestStatus, Currency, Market, to_market_target
@@ -339,4 +346,145 @@ def run_backtest_from_config(
         data_cutoff=data_cutoff,
         repository=repository,
         universe=universe,
+    )
+
+
+class BacktestShowError(ValueError):
+    """Raised when a run's status view cannot be assembled (SP 2.68)."""
+
+
+@dataclass(frozen=True)
+class BacktestShowResult:
+    """A run's status view: audit (SP 2.66) plus core metrics (SP 2.68)."""
+
+    audit: RunAudit
+    day_count: int
+    net_value_first: float | None
+    net_value_last: float | None
+    cumulative_return: float | None
+    metrics: MappingProxyType[str, float]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Render the status view as a JSON-safe dict."""
+        audit = self.audit
+        return {
+            "run_id": audit.run_id,
+            "status": audit.status.value,
+            "strategy": audit.strategy,
+            "strategy_version": audit.strategy_version,
+            "code_version": audit.code_version,
+            "config_hash": audit.config_hash,
+            "markets": [market.value for market in audit.markets],
+            "data_range": {
+                "start": audit.start_date.isoformat() if audit.start_date is not None else None,
+                "end": audit.end_date.isoformat() if audit.end_date is not None else None,
+                "cutoff": audit.data_cutoff.isoformat(),
+            },
+            "base_currency": audit.base_currency.value if audit.base_currency is not None else None,
+            "initial_capital": audit.initial_capital,
+            "day_count": self.day_count,
+            "net_value_first": self.net_value_first,
+            "net_value_last": self.net_value_last,
+            "cumulative_return": self.cumulative_return,
+            "metrics": dict(self.metrics),
+            "failure_reason": audit.failure_reason,
+        }
+
+    def readable(self) -> str:
+        """Render the status view as a human-readable research summary."""
+        audit = self.audit
+        markets = ", ".join(market.value for market in audit.markets) or "—"
+        start = audit.start_date.isoformat() if audit.start_date is not None else "—"
+        end = audit.end_date.isoformat() if audit.end_date is not None else "—"
+        base = audit.base_currency.value if audit.base_currency is not None else "—"
+        initial = "—" if audit.initial_capital is None else f"{audit.initial_capital:,.2f}"
+        first = "—" if self.net_value_first is None else f"{self.net_value_first:,.2f}"
+        last = "—" if self.net_value_last is None else f"{self.net_value_last:,.2f}"
+        cumulative = "—" if self.cumulative_return is None else f"{self.cumulative_return:.2%}"
+        lines = [
+            f"Backtest run {audit.run_id}:",
+            f"  status: {audit.status.value}",
+            f"  strategy: {audit.strategy} v{audit.strategy_version}",
+            f"  code version: {audit.code_version}",
+            f"  config hash: {audit.config_hash}",
+            f"  markets: {markets}",
+            f"  data range: {start} -> {end} (cutoff {audit.data_cutoff.isoformat()})",
+            f"  base currency: {base}",
+            f"  initial capital: {initial}",
+            f"  day count: {self.day_count}",
+            f"  net value: {first} -> {last} (cumulative {cumulative})",
+        ]
+        if self.metrics:
+            rendered = ", ".join(
+                f"{key}={value:.4f}" for key, value in sorted(self.metrics.items())
+            )
+            lines.append(f"  metrics: {rendered}")
+        reason = audit.failure_reason
+        if reason is not None:
+            lines.append(f"  failure reason: {reason}")
+        return "\n".join(lines)
+
+
+def show_backtest(*, connection: Connection, run_id: str) -> BacktestShowResult:
+    """Assemble the status view for a run id (SP 2.68).
+
+    Args:
+        connection: The database connection.
+        run_id: The backtest run id.
+
+    Returns:
+        A :class:`BacktestShowResult` with the audit and core metrics.
+
+    Raises:
+        BacktestShowError: If no run exists for the id.
+    """
+    repository = BacktestRepository(connection)
+    run_rows = [dict(row) for row in connection.execute(repository.get_run(run_id)).mappings()]
+    if not run_rows:
+        raise BacktestShowError(f"No backtest run found for run id {run_id!r}.")
+    net_value_rows = [
+        dict(row) for row in connection.execute(repository.list_net_values(run_id)).mappings()
+    ]
+    metric_rows = [
+        dict(row) for row in connection.execute(repository.list_metrics(run_id)).mappings()
+    ]
+    return _show_backtest_from_rows(run_rows[0], net_value_rows, metric_rows)
+
+
+def _show_backtest_from_rows(
+    run_row: Mapping[str, Any],
+    net_value_rows: Sequence[Mapping[str, Any]],
+    metric_rows: Sequence[Mapping[str, Any]],
+) -> BacktestShowResult:
+    """Assemble a status view from the fetched run, net-value and metric rows."""
+    record = RunRecord(
+        run_id=run_row["run_id"],
+        config_hash=run_row["config_hash"],
+        config_snapshot=dict(run_row["config_snapshot"]),
+        strategy=run_row["strategy"],
+        strategy_version=run_row["strategy_version"],
+        code_version=run_row["code_version"],
+        data_cutoff=run_row["data_cutoff"],
+        status=BacktestStatus(run_row["status"]),
+        started_at=run_row["started_at"],
+        finished_at=run_row["finished_at"],
+        error_summary=run_row["error_summary"],
+    )
+    audit = build_run_audit(record)
+    values = [float(row["total_value"]) for row in net_value_rows]
+    first = values[0] if values else None
+    last = values[-1] if values else None
+    cumulative = None
+    if first is not None and last is not None and first > 0:
+        cumulative = last / first - 1.0
+    metrics = MappingProxyType(
+        {str(row["metric_name"]): float(row["value"]) for row in metric_rows}
+    )
+    return BacktestShowResult(
+        audit=audit,
+        day_count=len(values),
+        net_value_first=first,
+        net_value_last=last,
+        cumulative_return=cumulative,
+        metrics=metrics,
     )

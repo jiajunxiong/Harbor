@@ -11,7 +11,7 @@ with fake readers, so no database is required.
 import tempfile
 import unittest
 from collections.abc import Mapping, Sequence
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -25,11 +25,15 @@ from harbor.core.trading_calendar import MarketTradingCalendar
 from harbor.services.backtest import (
     BacktestCommandResult,
     BacktestServiceError,
+    BacktestShowError,
+    BacktestShowResult,
     BacktestUniverseReader,
+    _show_backtest_from_rows,
     build_universe,
     pool_selections,
     run_backtest_command,
     run_backtest_from_config,
+    show_backtest,
 )
 
 HK = Market.HK
@@ -462,6 +466,152 @@ class RunBacktestFromConfigTests(unittest.TestCase):
         self.assertEqual(kwargs["config_path"], config_path)
         self.assertEqual(kwargs["code_version"], "2.0.0")
         self.assertIs(kwargs["universe"], universe)
+
+
+def _run_row(
+    *,
+    run_id: str = "run-1",
+    status: str = "COMPLETED",
+    error_summary: str | None = None,
+) -> dict[str, object]:
+    return {
+        "run_id": run_id,
+        "config_hash": "hash-1",
+        "config_snapshot": {
+            "markets": ["US"],
+            "market_quotas": [{"market": "US", "target_count": 1, "weight": 1.0}],
+            "start_date": "2024-01-02",
+            "end_date": "2024-01-08",
+            "base_currency": "USD",
+            "initial_capital": 100_000.0,
+        },
+        "strategy": "shareholder-return",
+        "strategy_version": "1.0.0",
+        "code_version": "2.0.0",
+        "data_cutoff": date(2024, 1, 8),
+        "status": status,
+        "started_at": datetime(2024, 1, 2, tzinfo=timezone.utc),
+        "finished_at": datetime(2024, 1, 8, tzinfo=timezone.utc),
+        "error_summary": error_summary,
+    }
+
+
+class FakeResult:
+    def __init__(self, rows: Sequence[Mapping[str, object]]) -> None:
+        self._rows = list(rows)
+
+    def mappings(self) -> list[Mapping[str, object]]:
+        return list(self._rows)
+
+
+class FakeRepository:
+    def __init__(
+        self,
+        run_rows: Sequence[Mapping[str, object]] = (),
+        net_value_rows: Sequence[Mapping[str, object]] = (),
+        metric_rows: Sequence[Mapping[str, object]] = (),
+    ) -> None:
+        self._run_rows = list(run_rows)
+        self._net_value_rows = list(net_value_rows)
+        self._metric_rows = list(metric_rows)
+
+    def get_run(self, run_id: str) -> tuple[str, str]:
+        return ("run", run_id)
+
+    def list_net_values(self, run_id: str) -> tuple[str, str]:
+        return ("net_values", run_id)
+
+    def list_metrics(self, run_id: str) -> tuple[str, str]:
+        return ("metrics", run_id)
+
+
+class FakeConnection:
+    def __init__(self, repository: FakeRepository) -> None:
+        self._repository = repository
+
+    def execute(self, statement: tuple[str, str]) -> FakeResult:
+        kind = statement[0]
+        if kind == "run":
+            return FakeResult(self._repository._run_rows)
+        if kind == "net_values":
+            return FakeResult(self._repository._net_value_rows)
+        if kind == "metrics":
+            return FakeResult(self._repository._metric_rows)
+        raise AssertionError(f"unexpected statement {statement!r}")
+
+
+class ShowBacktestTests(unittest.TestCase):
+    """Verify the SP 2.68 status view."""
+
+    def test_show_from_rows_computes_core_metrics(self) -> None:
+        net_values = [
+            {"as_of_date": date(2024, 1, 2), "total_value": 100_000.0},
+            {"as_of_date": date(2024, 1, 3), "total_value": 105_000.0},
+        ]
+        metrics = [{"metric_name": "sharpe", "value": 1.25}]
+        result = _show_backtest_from_rows(_run_row(), net_values, metrics)
+        self.assertIsInstance(result, BacktestShowResult)
+        self.assertEqual(result.audit.run_id, "run-1")
+        self.assertEqual(result.audit.status, BacktestStatus.COMPLETED)
+        self.assertEqual(result.day_count, 2)
+        self.assertAlmostEqual(result.net_value_first, 100_000.0)
+        self.assertAlmostEqual(result.net_value_last, 105_000.0)
+        self.assertAlmostEqual(result.cumulative_return, 0.05, places=6)
+        self.assertEqual(result.metrics, {"sharpe": 1.25})
+
+    def test_show_from_rows_empty_net_values(self) -> None:
+        result = _show_backtest_from_rows(_run_row(), (), ())
+        self.assertEqual(result.day_count, 0)
+        self.assertIsNone(result.net_value_first)
+        self.assertIsNone(result.net_value_last)
+        self.assertIsNone(result.cumulative_return)
+        self.assertEqual(result.metrics, {})
+
+    def test_show_dict_renders_config_range_status_metrics(self) -> None:
+        result = _show_backtest_from_rows(_run_row(), (), ())
+        data = result.to_dict()
+        self.assertEqual(data["run_id"], "run-1")
+        self.assertEqual(data["status"], "COMPLETED")
+        self.assertEqual(data["markets"], ["US"])
+        self.assertEqual(data["data_range"]["start"], "2024-01-02")
+        self.assertEqual(data["data_range"]["end"], "2024-01-08")
+        self.assertEqual(data["data_range"]["cutoff"], "2024-01-08")
+        self.assertEqual(data["failure_reason"], None)
+
+    def test_show_readable(self) -> None:
+        result = _show_backtest_from_rows(_run_row(), (), ())
+        text = result.readable()
+        self.assertIn("Backtest run run-1", text)
+        self.assertIn("status: COMPLETED", text)
+        self.assertIn("data range: 2024-01-02 -> 2024-01-08", text)
+        self.assertIn("day count: 0", text)
+
+    def test_show_failure_reason_from_error_summary(self) -> None:
+        result = _show_backtest_from_rows(_run_row(status="FAILED", error_summary="boom"), (), ())
+        self.assertEqual(result.audit.failure_reason, "boom")
+        self.assertIn("failure reason: boom", result.readable())
+
+    def test_show_backtest_fetches_run_and_metrics(self) -> None:
+        net_values = [
+            {"as_of_date": date(2024, 1, 2), "total_value": 100_000.0},
+            {"as_of_date": date(2024, 1, 3), "total_value": 102_000.0},
+        ]
+        repository = FakeRepository(
+            [_run_row()], net_values, [{"metric_name": "sharpe", "value": 1.5}]
+        )
+        connection = FakeConnection(repository)
+        with patch("harbor.services.backtest.BacktestRepository", return_value=repository):
+            result = show_backtest(connection=connection, run_id="run-1")
+        self.assertEqual(result.audit.run_id, "run-1")
+        self.assertAlmostEqual(result.cumulative_return, 0.02, places=6)
+        self.assertEqual(result.metrics, {"sharpe": 1.5})
+
+    def test_show_backtest_missing_run_raises(self) -> None:
+        repository = FakeRepository()
+        connection = FakeConnection(repository)
+        with patch("harbor.services.backtest.BacktestRepository", return_value=repository):
+            with self.assertRaisesRegex(BacktestShowError, "No backtest run found"):
+                show_backtest(connection=connection, run_id="nope")
 
 
 if __name__ == "__main__":
