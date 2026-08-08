@@ -124,6 +124,7 @@ tests/test_config.py
 tests/test_consistency_check.py
 tests/test_corporate_action_backtest.py
 tests/test_corporate_action_checks.py
+tests/test_corporate_action_regression.py
 tests/test_corporate_actions.py
 tests/test_cost_calendar_suite.py
 tests/test_cost_hk.py
