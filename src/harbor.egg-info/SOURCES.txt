@@ -190,6 +190,7 @@ tests/test_recalculation.py
 tests/test_reconciliation.py
 tests/test_replay_manifest.py
 tests/test_repositories.py
+tests/test_reproducible_backtest.py
 tests/test_research_smoke.py
 tests/test_result_export.py
 tests/test_resume_policy.py
