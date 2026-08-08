@@ -185,6 +185,7 @@ tests/test_quality_correlation.py
 tests/test_quality_policy.py
 tests/test_quality_report.py
 tests/test_readme_guide.py
+tests/test_real_data_contract.py
 tests/test_rebalance_schedule.py
 tests/test_recalculation.py
 tests/test_reconciliation.py
