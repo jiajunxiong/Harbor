@@ -132,6 +132,7 @@ tests/test_cost_us.py
 tests/test_coverage_checks.py
 tests/test_cross_market_merge.py
 tests/test_csv_export.py
+tests/test_data_isolation_review.py
 tests/test_data_readiness.py
 tests/test_default_parameters.py
 tests/test_dividend_checks.py
