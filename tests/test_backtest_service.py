@@ -8,6 +8,7 @@ status. The universe assembly and the default pool-based selection are covered
 with fake readers, so no database is required.
 """
 
+import json
 import tempfile
 import unittest
 from collections.abc import Mapping, Sequence
@@ -24,13 +25,16 @@ from harbor.core.stock_pool import StockPoolMembership, evaluate_stock_pool
 from harbor.core.trading_calendar import MarketTradingCalendar
 from harbor.services.backtest import (
     BacktestCommandResult,
+    BacktestReportError,
     BacktestServiceError,
     BacktestShowError,
     BacktestShowResult,
     BacktestUniverseReader,
+    _artifact_from_rows,
     _show_backtest_from_rows,
     build_universe,
     pool_selections,
+    report_backtest,
     run_backtest_command,
     run_backtest_from_config,
     show_backtest,
@@ -510,10 +514,16 @@ class FakeRepository:
         run_rows: Sequence[Mapping[str, object]] = (),
         net_value_rows: Sequence[Mapping[str, object]] = (),
         metric_rows: Sequence[Mapping[str, object]] = (),
+        position_rows: Sequence[Mapping[str, object]] = (),
+        fill_rows: Sequence[Mapping[str, object]] = (),
+        refused_rows: Sequence[Mapping[str, object]] = (),
     ) -> None:
         self._run_rows = list(run_rows)
         self._net_value_rows = list(net_value_rows)
         self._metric_rows = list(metric_rows)
+        self._position_rows = list(position_rows)
+        self._fill_rows = list(fill_rows)
+        self._refused_rows = list(refused_rows)
 
     def get_run(self, run_id: str) -> tuple[str, str]:
         return ("run", run_id)
@@ -524,12 +534,21 @@ class FakeRepository:
     def list_metrics(self, run_id: str) -> tuple[str, str]:
         return ("metrics", run_id)
 
+    def list_positions(self, market: str, run_id: str) -> tuple[str, str, str]:
+        return ("positions", market, run_id)
+
+    def list_fills(self, market: str, run_id: str) -> tuple[str, str, str]:
+        return ("fills", market, run_id)
+
+    def list_rejected_trades(self, market: str, run_id: str) -> tuple[str, str, str]:
+        return ("rejected", market, run_id)
+
 
 class FakeConnection:
     def __init__(self, repository: FakeRepository) -> None:
         self._repository = repository
 
-    def execute(self, statement: tuple[str, str]) -> FakeResult:
+    def execute(self, statement: tuple[str, ...]) -> FakeResult:
         kind = statement[0]
         if kind == "run":
             return FakeResult(self._repository._run_rows)
@@ -537,6 +556,12 @@ class FakeConnection:
             return FakeResult(self._repository._net_value_rows)
         if kind == "metrics":
             return FakeResult(self._repository._metric_rows)
+        if kind == "positions":
+            return FakeResult(self._repository._position_rows)
+        if kind == "fills":
+            return FakeResult(self._repository._fill_rows)
+        if kind == "rejected":
+            return FakeResult(self._repository._refused_rows)
         raise AssertionError(f"unexpected statement {statement!r}")
 
 
@@ -612,6 +637,104 @@ class ShowBacktestTests(unittest.TestCase):
         with patch("harbor.services.backtest.BacktestRepository", return_value=repository):
             with self.assertRaisesRegex(BacktestShowError, "No backtest run found"):
                 show_backtest(connection=connection, run_id="nope")
+
+
+def _net_value_row(*, as_of: date, total: float = 100_000.0) -> dict[str, object]:
+    return {
+        "as_of_date": as_of,
+        "currency": "USD",
+        "cash": 80_000.0,
+        "securities_value": 20_000.0,
+        "fees_paid": 0.0,
+        "total_value": total,
+    }
+
+
+def _fill_row(*, day: date = date(2024, 1, 2)) -> dict[str, object]:
+    return {
+        "trade_date": day,
+        "order_ref": "rebalance:2024-01-02",
+        "market": "US",
+        "symbol": "AAPL",
+        "side": "BUY",
+        "quantity": 200.0,
+        "price": 100.0,
+        "currency": "USD",
+        "fee": 0.0,
+    }
+
+
+class ReportBacktestTests(unittest.TestCase):
+    """Verify the SP 2.69 report assembly and rendering."""
+
+    def test_artifact_from_rows_builds_sections(self) -> None:
+        net_values = [_net_value_row(as_of=date(2024, 1, 2))]
+        fills = [_fill_row()]
+        refused = [
+            {
+                "market": "US",
+                "symbol": "MSFT",
+                "side": "BUY",
+                "quantity": 10.0,
+                "reason": "suspended",
+                "order_ref": "r",
+            }
+        ]
+        artifact = _artifact_from_rows(_run_row(), net_values, [], fills, refused, [])
+        self.assertEqual(artifact["run"]["run_id"], "run-1")
+        self.assertTrue(artifact["run"]["succeeded"])
+        self.assertEqual(artifact["run"]["day_count"], 1)
+        self.assertEqual(artifact["net_values"][0]["total_value"], 100_000.0)
+        self.assertIsNone(artifact["net_values"][0]["fx_pnl"])
+        self.assertEqual(artifact["trades"][0]["notional"], 20_000.0)
+        self.assertEqual(artifact["trades"][0]["date"], "2024-01-02")
+        self.assertEqual(artifact["refused"][0]["reason"], "suspended")
+        self.assertIsNone(artifact["refused"][0]["date"])
+        self.assertEqual(artifact["positions"], [])
+        self.assertEqual(artifact["dividends"], [])
+        self.assertEqual(artifact["corporate_actions"], [])
+        self.assertEqual(artifact["warnings"], [])
+        self.assertIsNone(artifact["metrics"]["performance"])
+
+    def test_report_backtest_renders_json(self) -> None:
+        repository = FakeRepository([_run_row()], [_net_value_row(as_of=date(2024, 1, 2))])
+        connection = FakeConnection(repository)
+        with patch("harbor.services.backtest.BacktestRepository", return_value=repository):
+            output = report_backtest(connection=connection, run_id="run-1", report_format="json")
+        data = json.loads(output)
+        self.assertEqual(data["run"]["run_id"], "run-1")
+        self.assertEqual(data["net_values"][0]["total_value"], 100_000.0)
+
+    def test_report_backtest_renders_csv(self) -> None:
+        repository = FakeRepository([_run_row()], [_net_value_row(as_of=date(2024, 1, 2))])
+        connection = FakeConnection(repository)
+        with patch("harbor.services.backtest.BacktestRepository", return_value=repository):
+            output = report_backtest(connection=connection, run_id="run-1", report_format="csv")
+        self.assertIn("# net_values", output)
+        self.assertIn("backtest_run_id", output)
+        self.assertIn("# factor_snapshots", output)
+
+    def test_report_backtest_renders_html(self) -> None:
+        repository = FakeRepository([_run_row()], [_net_value_row(as_of=date(2024, 1, 2))])
+        connection = FakeConnection(repository)
+        with patch("harbor.services.backtest.BacktestRepository", return_value=repository):
+            output = report_backtest(connection=connection, run_id="run-1", report_format="html")
+        self.assertIn("回测研究报告", output)
+        self.assertIn("run-1", output)
+
+    def test_report_backtest_missing_run_raises(self) -> None:
+        repository = FakeRepository()
+        connection = FakeConnection(repository)
+        with patch("harbor.services.backtest.BacktestRepository", return_value=repository):
+            with self.assertRaisesRegex(BacktestReportError, "No backtest run found"):
+                report_backtest(connection=connection, run_id="nope", report_format="json")
+
+    def test_report_backtest_invalid_format_raises(self) -> None:
+        repository = FakeRepository([_run_row()], [_net_value_row(as_of=date(2024, 1, 2))])
+        connection = FakeConnection(repository)
+        with patch("harbor.services.backtest.BacktestRepository", return_value=repository):
+            with self.assertRaisesRegex(BacktestReportError, "Unknown report format"):
+                report_backtest(connection=connection, run_id="run-1", report_format="xml")
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ from harbor.infrastructure.data_providers.factory import (
     print_capability_report,
 )
 from harbor.logging import configure_logging, get_logger
-from harbor.services.backtest import run_backtest_from_config, show_backtest
+from harbor.services.backtest import report_backtest, run_backtest_from_config, show_backtest
 from harbor.storage.repositories import Repository
 
 
@@ -113,6 +113,16 @@ def build_parser() -> argparse.ArgumentParser:
         "show", help="Show a backtest run's config, data range, status and core metrics."
     )
     show_parser.add_argument("run_id", help="The backtest run id.")
+    report_parser = backtest_subparsers.add_parser(
+        "report", help="Render a backtest run's report as JSON, CSV or HTML."
+    )
+    report_parser.add_argument("run_id", help="The backtest run id.")
+    report_parser.add_argument(
+        "--format",
+        choices=("json", "csv", "html"),
+        default="json",
+        help="Report format; defaults to json.",
+    )
     return parser
 
 
@@ -328,6 +338,8 @@ def _show_backtest(parser: argparse.ArgumentParser, arguments: argparse.Namespac
         return _show_backtest_run(parser, arguments)
     if arguments.backtest_command == "show":
         return _show_backtest_show(parser, arguments)
+    if arguments.backtest_command == "report":
+        return _show_backtest_report(parser, arguments)
     parser.error(f"Unsupported backtest command: {arguments.backtest_command}")
     return 2
 
@@ -374,6 +386,28 @@ def _show_backtest_show(parser: argparse.ArgumentParser, arguments: argparse.Nam
         parser.error(f"Backtest show failed: {error}")
         return 2
     sys.stdout.write(f"{json.dumps(result.to_dict(), sort_keys=True)}\n")
+    return 0
+
+
+def _show_backtest_report(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """Render a backtest run's report as JSON, CSV or HTML (SP 2.69)."""
+    try:
+        settings = Settings()  # type: ignore[call-arg]
+    except ValidationError as error:
+        parser.error(f"Invalid configuration: {error}")
+        return 2
+    try:
+        engine = create_engine(settings.database_url)
+        with engine.connect() as connection:
+            output = report_backtest(
+                connection=connection,
+                run_id=arguments.run_id,
+                report_format=arguments.format,
+            )
+    except (OSError, ValueError) as error:
+        parser.error(f"Backtest report failed: {error}")
+        return 2
+    sys.stdout.write(output + "\n")
     return 0
 
 

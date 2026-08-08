@@ -1,4 +1,4 @@
-"""Backtest run and status service (MVP 2 / SP 2.67–2.68).
+"""Backtest run, status and report service (MVP 2 / SP 2.67–2.69).
 
 Orchestrates a CLI backtest run (SP 2.67): loads the versioned strategy
 configuration (SP 2.5), computes the run identity (SP 2.48), creates the run
@@ -6,10 +6,10 @@ master record (SP 2.6), executes the SP 2.47 pipeline over a universe
 assembled from the storage reader (SP 2.51), persists the day-by-day results
 (SP 2.7) and updates the run status (SP 2.6), returning the run id and status.
 
-Also renders a run's status view (SP 2.68): fetching the persisted run master
-record by id, assembling the SP 2.66 audit (configuration, input range and
-failure reasons) and enriching it with the core metrics derived from the
-persisted net values and metric rows.
+Also renders a run's status view (SP 2.68) and its research report in
+JSON/CSV/HTML (SP 2.69): the report reassembles an SP 2.58-shaped artifact
+from the persisted result rows and the run's configuration snapshot, so the
+three export formats work on exactly what the database can honestly reproduce.
 
 The service lives in the orchestration layer: it composes core domain logic
 with the storage repositories and reader, so the CLI command stays thin and
@@ -19,6 +19,7 @@ is a genuine, reconcilable backtest; the factor-based selection pipeline
 (SP 2.15–2.28) is a separate concern not wired here.
 """
 
+import json
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -34,7 +35,9 @@ from harbor.core.backtest_config_loader import load_backtest_config
 from harbor.core.backtest_domain import BacktestStatus, Currency, Market, to_market_target
 from harbor.core.backtest_interfaces import DailyQuote, Dividend, TradingCalendar
 from harbor.core.backtest_runner import BacktestTrace, MockUniverse, run_end_to_end_backtest
+from harbor.core.csv_export import export_all_csvs
 from harbor.core.equity import EntitlementEvent
+from harbor.core.html_report import render_html_report
 from harbor.core.market_registry import get_market_config
 from harbor.core.rebalance_schedule import RebalanceSchedule, generate_rebalance_days
 from harbor.core.run_identity import identity_from_config
@@ -488,3 +491,186 @@ def _show_backtest_from_rows(
         cumulative_return=cumulative,
         metrics=metrics,
     )
+
+
+class BacktestReportError(ValueError):
+    """Raised when a run's report cannot be rendered (SP 2.69)."""
+
+
+_REPORT_FORMATS = ("json", "csv", "html")
+
+
+def build_report_artifact(*, connection: Connection, run_id: str) -> dict[str, Any]:
+    """Reassemble an SP 2.58-shaped artifact from the persisted rows (SP 2.69).
+
+    Only the sections the database can honestly reproduce are populated: net
+    values, positions, trades (fills) and refused orders are read from the
+    SP 2.7 result tables; dividends, corporate actions and warnings have no
+    persisted table so they are empty; the metrics sections are ``None`` (they
+    are not recomputed here). Unavailable fields within a row are ``None``
+    rather than fabricated.
+
+    Raises:
+        BacktestReportError: If no run exists for the id.
+    """
+    repository = BacktestRepository(connection)
+    run_rows = [dict(row) for row in connection.execute(repository.get_run(run_id)).mappings()]
+    if not run_rows:
+        raise BacktestReportError(f"No backtest run found for run id {run_id!r}.")
+    run_row = run_rows[0]
+    markets = [str(market) for market in dict(run_row["config_snapshot"]).get("markets", ())]
+    net_value_rows = [
+        dict(row) for row in connection.execute(repository.list_net_values(run_id)).mappings()
+    ]
+    metric_rows = [
+        dict(row) for row in connection.execute(repository.list_metrics(run_id)).mappings()
+    ]
+    position_rows: list[dict[str, Any]] = []
+    fill_rows: list[dict[str, Any]] = []
+    refused_rows: list[dict[str, Any]] = []
+    for market in markets:
+        position_rows.extend(
+            dict(row)
+            for row in connection.execute(repository.list_positions(market, run_id)).mappings()
+        )
+        fill_rows.extend(
+            dict(row)
+            for row in connection.execute(repository.list_fills(market, run_id)).mappings()
+        )
+        refused_rows.extend(
+            dict(row)
+            for row in connection.execute(
+                repository.list_rejected_trades(market, run_id)
+            ).mappings()
+        )
+    return _artifact_from_rows(
+        run_row, net_value_rows, position_rows, fill_rows, refused_rows, metric_rows
+    )
+
+
+def _artifact_from_rows(
+    run_row: Mapping[str, Any],
+    net_value_rows: Sequence[Mapping[str, Any]],
+    position_rows: Sequence[Mapping[str, Any]],
+    fill_rows: Sequence[Mapping[str, Any]],
+    refused_rows: Sequence[Mapping[str, Any]],
+    metric_rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Build the SP 2.58-shaped artifact from the fetched result rows."""
+    config = dict(run_row["config_snapshot"])
+    net_values = [
+        {
+            "date": str(row["as_of_date"]),
+            "currency": str(row["currency"]),
+            "cash": float(row["cash"]),
+            "securities_value": float(row["securities_value"]),
+            "fees_paid": float(row["fees_paid"]),
+            "total_value": float(row["total_value"]),
+            "fx_pnl": None,
+        }
+        for row in net_value_rows
+    ]
+    positions = [
+        {
+            "date": str(row["as_of_date"]),
+            "market": str(row["market"]),
+            "symbol": str(row["symbol"]),
+            "quantity": float(row["quantity"]),
+            "currency": str(row["currency"]),
+        }
+        for row in position_rows
+    ]
+    trades = [
+        {
+            "date": str(row["trade_date"]),
+            "order_ref": str(row["order_ref"]),
+            "market": str(row["market"]),
+            "symbol": str(row["symbol"]),
+            "side": str(row["side"]),
+            "quantity": float(row["quantity"]),
+            "price": float(row["price"]),
+            "currency": str(row["currency"]),
+            "fee": float(row["fee"]),
+            "notional": float(row["quantity"]) * float(row["price"]),
+        }
+        for row in fill_rows
+    ]
+    refused = [
+        {
+            "date": None,
+            "market": str(row["market"]),
+            "symbol": str(row["symbol"]),
+            "side": str(row["side"]) if row.get("side") is not None else None,
+            "quantity": float(row["quantity"]) if row.get("quantity") is not None else None,
+            "reason": str(row["reason"]),
+        }
+        for row in refused_rows
+    ]
+    first_date = net_values[0]["date"] if net_values else config.get("start_date")
+    last_date = net_values[-1]["date"] if net_values else config.get("end_date")
+    return {
+        "schema_version": "1.0",
+        "run": {
+            "run_id": str(run_row["run_id"]),
+            "status": str(run_row["status"]),
+            "succeeded": str(run_row["status"]) == BacktestStatus.COMPLETED.value,
+            "inputs": {
+                "code_version": str(run_row["code_version"]),
+                "config_hash": str(run_row["config_hash"]),
+                "data_cutoff": str(run_row["data_cutoff"]),
+                "data_range_start": first_date,
+                "data_range_end": last_date,
+            },
+            "base_currency": config.get("base_currency"),
+            "initial_capital": config.get("initial_capital"),
+            "day_count": len(net_values),
+            "reconciliation_failures": [],
+        },
+        "config": config,
+        "metrics": {
+            "performance": None,
+            "trade_stats": None,
+            "exposure": None,
+            "drawdown": None,
+            "attribution": None,
+        },
+        "net_values": net_values,
+        "positions": positions,
+        "trades": trades,
+        "dividends": [],
+        "corporate_actions": [],
+        "refused": refused,
+        "warnings": [],
+    }
+
+
+def _render_artifact(artifact: dict[str, Any], report_format: str) -> str:
+    """Render an artifact in the requested report format (SP 2.69)."""
+    if report_format == "json":
+        return json.dumps(artifact, indent=2, sort_keys=True, ensure_ascii=False)
+    if report_format == "csv":
+        csvs = export_all_csvs(artifact)
+        return "\n\n".join(f"# {name}\n{content.rstrip()}" for name, content in csvs.items())
+    if report_format == "html":
+        return render_html_report(artifact)
+    raise BacktestReportError(
+        f"Unknown report format {report_format!r}; expected one of {sorted(_REPORT_FORMATS)}."
+    )
+
+
+def report_backtest(*, connection: Connection, run_id: str, report_format: str) -> str:
+    """Render a run's research report in the requested format (SP 2.69).
+
+    Args:
+        connection: The database connection.
+        run_id: The backtest run id.
+        report_format: One of ``json``, ``csv`` or ``html``.
+
+    Returns:
+        The rendered report document.
+
+    Raises:
+        BacktestReportError: If the run is missing or the format is unknown.
+    """
+    artifact = build_report_artifact(connection=connection, run_id=run_id)
+    return _render_artifact(artifact, report_format)

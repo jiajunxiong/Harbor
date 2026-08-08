@@ -212,5 +212,93 @@ class BacktestShowCliTests(unittest.TestCase):
         self.assertIn("No backtest run found", stderr.getvalue())
 
 
+class BacktestReportCliTests(unittest.TestCase):
+    """Verify the ``backtest report`` command surface (SP 2.69)."""
+
+    ENVIRONMENT = {
+        "DATABASE_URL": "postgresql+psycopg://harbor:secret@localhost:5432/harbor",
+        "DATA_PROVIDER_HK": "mock",
+        "DATA_PROVIDER_US": "mock",
+    }
+
+    def test_backtest_report_defaults_to_json(self) -> None:
+        from harbor.cli import main
+
+        output = io.StringIO()
+        with (
+            patch.dict(os.environ, self.ENVIRONMENT, clear=True),
+            patch("harbor.cli.create_engine"),
+            patch(
+                "harbor.cli.report_backtest",
+                return_value='{"run_id": "run-1", "status": "COMPLETED"}',
+            ) as report_mock,
+        ):
+            with redirect_stdout(output), redirect_stderr(io.StringIO()):
+                exit_code = main(["backtest", "report", "run-1"])
+
+        self.assertEqual(exit_code, 0)
+        summary = json.loads(output.getvalue())
+        self.assertEqual(summary["run_id"], "run-1")
+        report_mock.assert_called_once()
+        self.assertEqual(report_mock.call_args.kwargs["report_format"], "json")
+        self.assertEqual(report_mock.call_args.kwargs["run_id"], "run-1")
+
+    def test_backtest_report_csv_format(self) -> None:
+        from harbor.cli import main
+
+        output = io.StringIO()
+        with (
+            patch.dict(os.environ, self.ENVIRONMENT, clear=True),
+            patch("harbor.cli.create_engine"),
+            patch(
+                "harbor.cli.report_backtest",
+                return_value="# net_values\nbacktest_run_id,date\n",
+            ) as report_mock,
+        ):
+            with redirect_stdout(output), redirect_stderr(io.StringIO()):
+                exit_code = main(["backtest", "report", "run-1", "--format", "csv"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("# net_values", output.getvalue())
+        self.assertEqual(report_mock.call_args.kwargs["report_format"], "csv")
+
+    def test_backtest_report_invalid_format_is_usage_error(self) -> None:
+        from harbor.cli import main
+
+        with patch.dict(os.environ, self.ENVIRONMENT, clear=True):
+            with self.assertRaises(SystemExit) as exit_context:
+                main(["backtest", "report", "run-1", "--format", "xml"])
+        self.assertEqual(exit_context.exception.code, 2)
+
+    def test_backtest_report_missing_run_id_is_usage_error(self) -> None:
+        from harbor.cli import main
+
+        with patch.dict(os.environ, self.ENVIRONMENT, clear=True):
+            with self.assertRaises(SystemExit) as exit_context:
+                main(["backtest", "report"])
+        self.assertEqual(exit_context.exception.code, 2)
+
+    def test_backtest_report_missing_run_is_actionable_error(self) -> None:
+        from harbor.cli import main
+        from harbor.services.backtest import BacktestReportError
+
+        stderr = io.StringIO()
+        with (
+            patch.dict(os.environ, self.ENVIRONMENT, clear=True),
+            patch("harbor.cli.create_engine"),
+            patch(
+                "harbor.cli.report_backtest",
+                side_effect=BacktestReportError("No backtest run found for run id 'nope'."),
+            ),
+        ):
+            with self.assertRaises(SystemExit) as exit_context:
+                with redirect_stdout(io.StringIO()), redirect_stderr(stderr):
+                    main(["backtest", "report", "nope"])
+
+        self.assertEqual(exit_context.exception.code, 2)
+        self.assertIn("Backtest report failed", stderr.getvalue())
+        self.assertIn("No backtest run found", stderr.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
