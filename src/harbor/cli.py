@@ -27,6 +27,7 @@ from harbor.infrastructure.data_providers.factory import (
     print_capability_report,
 )
 from harbor.logging import configure_logging, get_logger
+from harbor.services.backtest import run_backtest_from_config
 from harbor.storage.repositories import Repository
 
 
@@ -87,6 +88,27 @@ def build_parser() -> argparse.ArgumentParser:
     report_parser.add_argument(
         "--csv", default=None, help="Optional path to export the quality issues as CSV."
     )
+    backtest_parser = subparsers.add_parser(
+        "backtest", help="Run and inspect backtest research runs."
+    )
+    backtest_subparsers = backtest_parser.add_subparsers(dest="backtest_command", required=True)
+    run_parser = backtest_subparsers.add_parser(
+        "run", help="Run a backtest from a versioned strategy config file."
+    )
+    run_parser.add_argument(
+        "--config", required=True, help="Path to the strategy configuration (YAML/JSON)."
+    )
+    run_parser.add_argument(
+        "--code-version",
+        default=__version__,
+        help="Code version recorded with the run; defaults to the package version.",
+    )
+    run_parser.add_argument(
+        "--data-cutoff",
+        type=date.fromisoformat,
+        default=None,
+        help="Data cutoff date (ISO); defaults to the config end date.",
+    )
     return parser
 
 
@@ -109,6 +131,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _show_fetch(parser, arguments)
     if arguments.command == "quality":
         return _show_quality(parser, arguments)
+    if arguments.command == "backtest":
+        return _show_backtest_run(parser, arguments)
     parser.error(f"Unsupported command: {arguments.command}")
     return 2
 
@@ -291,6 +315,33 @@ def _show_quality(parser: argparse.ArgumentParser, arguments: argparse.Namespace
 def _show_providers() -> int:
     """Print the registered data provider capability report."""
     print_capability_report()
+    return 0
+
+
+def _show_backtest_run(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """Run a backtest from a config file and render the run id and status."""
+    if arguments.backtest_command != "run":
+        parser.error(f"Unsupported backtest command: {arguments.backtest_command}")
+        return 2
+    try:
+        settings = Settings()  # type: ignore[call-arg]
+    except ValidationError as error:
+        parser.error(f"Invalid configuration: {error}")
+        return 2
+    try:
+        engine = create_engine(settings.database_url)
+        with engine.begin() as connection:
+            result = run_backtest_from_config(
+                config_path=arguments.config,
+                code_version=arguments.code_version,
+                data_cutoff=arguments.data_cutoff,
+                connection=connection,
+            )
+    except (OSError, ValueError) as error:
+        parser.error(f"Backtest run failed: {error}")
+        return 2
+    summary = {"run_id": result.run_id, "status": result.status.value}
+    sys.stdout.write(f"{json.dumps(summary, sort_keys=True)}\n")
     return 0
 
 

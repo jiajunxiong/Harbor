@@ -86,6 +86,8 @@ src/harbor/infrastructure/data_providers/akshare.py
 src/harbor/infrastructure/data_providers/factory.py
 src/harbor/infrastructure/data_providers/mock.py
 src/harbor/infrastructure/data_providers/yfinance.py
+src/harbor/services/__init__.py
+src/harbor/services/backtest.py
 src/harbor/storage/__init__.py
 src/harbor/storage/backtest_data_reader.py
 src/harbor/storage/backtest_repositories.py
@@ -98,6 +100,7 @@ tests/test_adjustments.py
 tests/test_akshare_providers.py
 tests/test_attribution.py
 tests/test_audit_query.py
+tests/test_backtest_cli.py
 tests/test_backtest_config.py
 tests/test_backtest_config_loader.py
 tests/test_backtest_data_reader.py
@@ -106,6 +109,7 @@ tests/test_backtest_domain.py
 tests/test_backtest_engine.py
 tests/test_backtest_interfaces.py
 tests/test_backtest_repositories.py
+tests/test_backtest_service.py
 tests/test_backtest_state_machine.py
 tests/test_benchmark.py
 tests/test_candidate_filter.py
