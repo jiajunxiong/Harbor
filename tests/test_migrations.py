@@ -103,7 +103,7 @@ class MigrationChainTests(unittest.TestCase):
         bases = script.get_bases()
         self.assertEqual(len(heads), 1)
         self.assertEqual(len(bases), 1)
-        self.assertEqual(heads[0], "0021_create_factor_snapshots")
+        self.assertEqual(heads[0], "0022_add_backtest_runs_resume_of")
         self.assertEqual(bases[0], "0001_create_securities")
 
         versions = list(script.walk_revisions())

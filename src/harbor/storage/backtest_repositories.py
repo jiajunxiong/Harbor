@@ -61,6 +61,7 @@ class BacktestRepository:
         data_cutoff: date,
         started_at: datetime,
         status: str,
+        resume_of: str | None = None,
     ) -> Insert:
         """Build an idempotent insert keyed on ``run_id`` (SP 2.48)."""
         return (
@@ -76,6 +77,7 @@ class BacktestRepository:
                     "data_cutoff": data_cutoff,
                     "status": self._validate_status(status),
                     "started_at": started_at,
+                    "resume_of": resume_of,
                 }
             )
             .on_conflict_do_nothing(index_elements=["run_id"])
@@ -112,12 +114,14 @@ class BacktestRepository:
         data_cutoff: date,
         started_at: datetime,
         status: str = BacktestStatus.RUNNING.value,
+        resume_of: str | None = None,
     ) -> int:
         """Insert a run master record, idempotent on ``run_id``.
 
         An existing run with the same id is left untouched: a re-run must not
-        silently overwrite prior results (SP 2.48). Returns the number of rows
-        actually inserted.
+        silently overwrite prior results (SP 2.48). ``resume_of`` links a
+        resumed run back to the original run it was created from (SP 2.70).
+        Returns the number of rows actually inserted.
         """
         statement = self._create_statement(
             run_id=run_id,
@@ -129,6 +133,7 @@ class BacktestRepository:
             data_cutoff=data_cutoff,
             started_at=started_at,
             status=status,
+            resume_of=resume_of,
         )
         result = self._connection.execute(statement.returning(BacktestRun.run_id))
         return len(result.fetchall())

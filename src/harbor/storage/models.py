@@ -409,6 +409,7 @@ class BacktestRun(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resume_of: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class BacktestNetValue(Base):

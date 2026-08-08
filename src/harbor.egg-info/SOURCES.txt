@@ -69,8 +69,10 @@ src/harbor/core/rebalance_schedule.py
 src/harbor/core/recalculation.py
 src/harbor/core/replay_manifest.py
 src/harbor/core/result_export.py
+src/harbor/core/resume_policy.py
 src/harbor/core/review_queue.py
 src/harbor/core/run_identity.py
+src/harbor/core/run_logging.py
 src/harbor/core/selection_report.py
 src/harbor/core/stock_pool.py
 src/harbor/core/suspension.py
@@ -181,8 +183,10 @@ tests/test_replay_manifest.py
 tests/test_repositories.py
 tests/test_research_smoke.py
 tests/test_result_export.py
+tests/test_resume_policy.py
 tests/test_review_queue.py
 tests/test_run_identity.py
+tests/test_run_logging.py
 tests/test_selection_report.py
 tests/test_stock_pool.py
 tests/test_survivorship_bias.py

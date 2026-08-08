@@ -9,6 +9,7 @@ with fake readers, so no database is required.
 """
 
 import json
+import logging
 import tempfile
 import unittest
 from collections.abc import Mapping, Sequence
@@ -24,8 +25,10 @@ from harbor.core.equity import EntitlementEvent
 from harbor.core.stock_pool import StockPoolMembership, evaluate_stock_pool
 from harbor.core.trading_calendar import MarketTradingCalendar
 from harbor.services.backtest import (
+    BacktestCancelError,
     BacktestCommandResult,
     BacktestReportError,
+    BacktestResumeError,
     BacktestServiceError,
     BacktestShowError,
     BacktestShowResult,
@@ -33,8 +36,10 @@ from harbor.services.backtest import (
     _artifact_from_rows,
     _show_backtest_from_rows,
     build_universe,
+    cancel_backtest,
     pool_selections,
     report_backtest,
+    resume_backtest_from_config,
     run_backtest_command,
     run_backtest_from_config,
     show_backtest,
@@ -335,6 +340,33 @@ class RunBacktestCommandTests(unittest.TestCase):
         self.assertEqual(fills[0]["market"], "US")
         self.assertEqual(fills[0]["symbol"], "AAPL")
         self.assertEqual(fills[0]["side"], "BUY")
+
+    def test_run_backtest_command_records_resume_of(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = _write_config(Path(tmp))
+            repository = RecordingBacktestRepository()
+            run_backtest_command(
+                config_path=config_path,
+                code_version="2.0.0",
+                data_cutoff=None,
+                repository=repository,
+                universe=_us_universe(),
+                resume_of="run-original",
+            )
+        self.assertEqual(repository.created[0]["resume_of"], "run-original")
+
+    def test_run_backtest_command_defaults_resume_of_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = _write_config(Path(tmp))
+            repository = RecordingBacktestRepository()
+            run_backtest_command(
+                config_path=config_path,
+                code_version="2.0.0",
+                data_cutoff=None,
+                repository=repository,
+                universe=_us_universe(),
+            )
+        self.assertIsNone(repository.created[0]["resume_of"])
 
     def test_explicit_data_cutoff_overrides_config_end(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -735,6 +767,273 @@ class ReportBacktestTests(unittest.TestCase):
         with patch("harbor.services.backtest.BacktestRepository", return_value=repository):
             with self.assertRaisesRegex(BacktestReportError, "Unknown report format"):
                 report_backtest(connection=connection, run_id="run-1", report_format="xml")
+
+
+class LifecycleRepository:
+    """Records run lookups, updates and creates for cancel/resume tests."""
+
+    def __init__(self, run_rows: Sequence[Mapping[str, object]] = ()) -> None:
+        self._run_rows = list(run_rows)
+        self.updates: list[dict[str, object]] = []
+        self.created: list[dict[str, object]] = []
+
+    def get_run(self, run_id: str) -> tuple[str, str]:
+        return ("run", run_id)
+
+    def update_run(
+        self,
+        *,
+        run_id: str,
+        status: str,
+        finished_at: object | None = None,
+        error_summary: str | None = None,
+    ) -> int:
+        self.updates.append(
+            {
+                "run_id": run_id,
+                "status": status,
+                "finished_at": finished_at,
+                "error_summary": error_summary,
+            }
+        )
+        return 1
+
+    def create_run(self, **kwargs: object) -> int:
+        self.created.append(kwargs)
+        return 1
+
+
+class CancelBacktestTests(unittest.TestCase):
+    """Verify the SP 2.70 cancel command surface."""
+
+    def test_cancel_initializing_run_marks_cancelled(self) -> None:
+        repository = LifecycleRepository([_run_row(status="INITIALIZING")])
+        connection = FakeConnection(repository)
+        with patch("harbor.services.backtest.BacktestRepository", return_value=repository):
+            result = cancel_backtest(connection=connection, run_id="run-1")
+        self.assertEqual(result.run_id, "run-1")
+        self.assertEqual(result.status, BacktestStatus.CANCELLED)
+        self.assertEqual(repository.updates[-1]["status"], BacktestStatus.CANCELLED.value)
+        self.assertIsNotNone(repository.updates[-1]["finished_at"])
+
+    def test_cancel_running_run_marks_cancelled(self) -> None:
+        repository = LifecycleRepository([_run_row(status="RUNNING")])
+        connection = FakeConnection(repository)
+        with patch("harbor.services.backtest.BacktestRepository", return_value=repository):
+            result = cancel_backtest(connection=connection, run_id="run-1")
+        self.assertEqual(result.status, BacktestStatus.CANCELLED)
+        self.assertEqual(repository.updates[-1]["run_id"], "run-1")
+
+    def test_cancel_completed_run_is_refused(self) -> None:
+        repository = LifecycleRepository([_run_row(status="COMPLETED")])
+        connection = FakeConnection(repository)
+        with patch("harbor.services.backtest.BacktestRepository", return_value=repository):
+            with self.assertRaisesRegex(BacktestCancelError, "cannot be cancelled"):
+                cancel_backtest(connection=connection, run_id="run-1")
+        self.assertEqual(repository.updates, [])
+
+    def test_cancel_failed_run_is_refused(self) -> None:
+        repository = LifecycleRepository([_run_row(status="FAILED", error_summary="boom")])
+        connection = FakeConnection(repository)
+        with patch("harbor.services.backtest.BacktestRepository", return_value=repository):
+            with self.assertRaisesRegex(BacktestCancelError, "cannot be cancelled"):
+                cancel_backtest(connection=connection, run_id="run-1")
+
+    def test_cancel_missing_run_raises(self) -> None:
+        repository = LifecycleRepository()
+        connection = FakeConnection(repository)
+        with patch("harbor.services.backtest.BacktestRepository", return_value=repository):
+            with self.assertRaisesRegex(BacktestCancelError, "No backtest run found"):
+                cancel_backtest(connection=connection, run_id="nope")
+
+
+class ResumeBacktestTests(unittest.TestCase):
+    """Verify the SP 2.70 resume command surface."""
+
+    def _resume(
+        self,
+        repository: LifecycleRepository,
+        *,
+        config_path: str,
+        code_version: str = "2.0.0",
+        data_cutoff: date | None = None,
+    ) -> tuple[BacktestCommandResult, object]:
+        connection = FakeConnection(repository)
+        universe = _us_universe()
+        with (
+            patch("harbor.services.backtest.BacktestRepository", return_value=repository),
+            patch("harbor.services.backtest.load_backtest_config"),
+            patch("harbor.services.backtest.config_hash", return_value="hash-1"),
+            patch("harbor.services.backtest.StorageBacktestDataReader"),
+            patch("harbor.services.backtest.MarketTradingCalendar"),
+            patch(
+                "harbor.services.backtest.pool_selections",
+                return_value={(US, _DAYS[0]): ("AAPL",)},
+            ),
+            patch("harbor.services.backtest.build_universe", return_value=universe),
+            patch(
+                "harbor.services.backtest.run_backtest_command",
+                return_value=BacktestCommandResult(
+                    run_id="run-new", status=BacktestStatus.COMPLETED
+                ),
+            ) as run_mock,
+        ):
+            result = resume_backtest_from_config(
+                config_path=config_path,
+                code_version=code_version,
+                data_cutoff=data_cutoff,
+                connection=connection,
+                original_run_id="run-1",
+            )
+            return result, run_mock
+
+    def test_resume_cancelled_run_creates_linked_new_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = _write_config(Path(tmp))
+            repository = LifecycleRepository([_run_row(status="CANCELLED")])
+            result, run_mock = self._resume(repository, config_path=config_path)
+        self.assertEqual(result.run_id, "run-new")
+        self.assertEqual(result.status, BacktestStatus.COMPLETED)
+        self.assertEqual(run_mock.call_args.kwargs["resume_of"], "run-1")
+        self.assertEqual(run_mock.call_args.kwargs["config_path"], config_path)
+
+    def test_resume_failed_run_creates_linked_new_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = _write_config(Path(tmp))
+            repository = LifecycleRepository([_run_row(status="FAILED", error_summary="boom")])
+            result, run_mock = self._resume(repository, config_path=config_path)
+        self.assertEqual(result.run_id, "run-new")
+        self.assertEqual(run_mock.call_args.kwargs["resume_of"], "run-1")
+
+    def test_resume_completed_run_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = _write_config(Path(tmp))
+            repository = LifecycleRepository([_run_row(status="COMPLETED")])
+            with self.assertRaisesRegex(BacktestResumeError, "already completed"):
+                self._resume(repository, config_path=config_path)
+
+    def test_resume_running_run_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = _write_config(Path(tmp))
+            repository = LifecycleRepository([_run_row(status="RUNNING")])
+            with self.assertRaisesRegex(BacktestResumeError, "still in progress"):
+                self._resume(repository, config_path=config_path)
+
+    def test_resume_missing_run_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = _write_config(Path(tmp))
+            repository = LifecycleRepository()
+            with self.assertRaisesRegex(BacktestResumeError, "No backtest run found"):
+                self._resume(repository, config_path=config_path)
+
+    def test_resume_with_mismatched_config_hash_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = _write_config(Path(tmp))
+            repository = LifecycleRepository([_run_row(status="CANCELLED")])
+            with (
+                patch("harbor.services.backtest.BacktestRepository", return_value=repository),
+                patch("harbor.services.backtest.load_backtest_config"),
+                patch("harbor.services.backtest.config_hash", return_value="different"),
+            ):
+                connection = FakeConnection(repository)
+                with self.assertRaisesRegex(BacktestResumeError, "config"):
+                    resume_backtest_from_config(
+                        config_path=config_path,
+                        code_version="2.0.0",
+                        data_cutoff=None,
+                        connection=connection,
+                        original_run_id="run-1",
+                    )
+
+
+class _CaptureHandler(logging.Handler):
+    """Collects emitted records in memory for assertions."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+class RunLoggingServiceTests(unittest.TestCase):
+    """Verify SP 2.71 structured run-log correlation from the service."""
+
+    def _capture_logger(self) -> tuple[logging.Logger, _CaptureHandler]:
+        logger = logging.getLogger("harbor.test_backtest_service")
+        logger.handlers.clear()
+        logger.setLevel(logging.DEBUG)
+        logger.propagate = False
+        handler = _CaptureHandler()
+        logger.addHandler(handler)
+        return logger, handler
+
+    def test_completed_run_emits_correlated_events(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = _write_config(Path(tmp))
+            repository = RecordingBacktestRepository()
+            logger, handler = self._capture_logger()
+            result = run_backtest_command(
+                config_path=config_path,
+                code_version="2.0.0",
+                data_cutoff=None,
+                repository=repository,
+                universe=_us_universe(),
+                logger=logger,
+            )
+        self.assertEqual(result.status, BacktestStatus.COMPLETED)
+        events = [record.getMessage() for record in handler.records]
+        self.assertIn("backtest_run_started", events)
+        self.assertIn("backtest_run_completed", events)
+        self.assertIn("backtest_stage_started", events)
+        self.assertIn("backtest_stage_completed", events)
+        stage_records = [
+            record for record in handler.records if record.getMessage() == "backtest_stage_started"
+        ]
+        self.assertTrue(stage_records)
+        self.assertEqual(stage_records[0].stage, "signal")
+        for record in handler.records:
+            self.assertTrue(record.backtest_run_id)
+            self.assertEqual(record.strategy_version, "1.0.0")
+            self.assertEqual(record.market, "US")
+
+    def test_without_logger_emits_no_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = _write_config(Path(tmp))
+            repository = RecordingBacktestRepository()
+            _, handler = self._capture_logger()
+            result = run_backtest_command(
+                config_path=config_path,
+                code_version="2.0.0",
+                data_cutoff=None,
+                repository=repository,
+                universe=_us_universe(),
+            )
+        self.assertEqual(result.status, BacktestStatus.COMPLETED)
+        self.assertEqual(handler.records, [])
+
+    def test_failed_run_emits_failed_event_with_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = _write_cross_market_config(Path(tmp))
+            repository = RecordingBacktestRepository()
+            logger, handler = self._capture_logger()
+            result = run_backtest_command(
+                config_path=config_path,
+                code_version="2.0.0",
+                data_cutoff=None,
+                repository=repository,
+                universe=_cross_market_universe(),
+                logger=logger,
+            )
+        self.assertEqual(result.status, BacktestStatus.FAILED)
+        failed = [
+            record for record in handler.records if record.getMessage() == "backtest_run_failed"
+        ]
+        self.assertEqual(len(failed), 1)
+        self.assertTrue(failed[0].error_summary)
+        self.assertEqual(failed[0].levelno, logging.ERROR)
+        self.assertIn("backtest_stage_failed", [r.getMessage() for r in handler.records])
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ value = qty x price x fx), that results are replayable (SP 2.48 / 2.62), and
 that corporate actions and dividends flow through to cash and net value.
 """
 
+import logging
 import unittest
 from datetime import date
 
@@ -27,6 +28,7 @@ from harbor.core.backtest_runner import (
 )
 from harbor.core.equity import EntitlementEvent
 from harbor.core.market_registry import CorporateActionType
+from harbor.core.run_logging import RunLogContext
 from harbor.core.target_weight import TargetWeightConfig, WeightingMethod
 from harbor.core.trading_calendar import MarketTradingCalendar
 
@@ -376,6 +378,78 @@ class CorporateActionFlowTests(unittest.TestCase):
         ]
         self.assertEqual(len(adjustments), 1)
         self.assertTrue(adjustments[0].shares_changed)
+
+
+class _CaptureHandler(logging.Handler):
+    """Collects emitted records in memory for assertions."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+def _capture_logger() -> tuple[logging.Logger, _CaptureHandler]:
+    """Return an isolated logger with a capturing handler."""
+    logger = logging.getLogger("harbor.test_end_to_end_backtest")
+    logger.handlers.clear()
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+    handler = _CaptureHandler()
+    logger.addHandler(handler)
+    return logger, handler
+
+
+class RunLoggingRunnerTests(unittest.TestCase):
+    """Verify SP 2.71 stage-correlation events from the end-to-end runner."""
+
+    def setUp(self) -> None:
+        self.config = _config(
+            markets=(HK,),
+            quotas=(MarketQuota(market=HK, target_count=2, weight=1.0),),
+            base=HKD,
+        )
+        self.universe = MockUniverse(
+            calendar=_calendar(),
+            quotes=_hk_quotes(),
+            selections={(HK, _REBALANCE_DAY): ("0001.HK", "0002.HK")},
+        )
+
+    def test_run_emits_stage_events_when_logger_supplied(self) -> None:
+        logger, handler = _capture_logger()
+        context = RunLogContext(run_id="log-1", strategy_version="1.0.0")
+        trace = run_end_to_end_backtest(
+            run_id="log-1",
+            config=self.config,
+            universe=self.universe,
+            weighting=_weighting(),
+            log_context=context,
+            logger=logger,
+        )
+        self.assertTrue(trace.succeeded)
+        started = [
+            record for record in handler.records if record.getMessage() == "backtest_stage_started"
+        ]
+        self.assertEqual(len(started), len(_DAYS) * 6)
+        for record in started:
+            self.assertEqual(record.backtest_run_id, "log-1")
+            self.assertIn(
+                record.stage,
+                {"signal", "rebalance", "fill", "corporate_action", "valuation", "persist"},
+            )
+        self.assertIn("backtest_stage_completed", [r.getMessage() for r in handler.records])
+
+    def test_run_without_logger_emits_nothing(self) -> None:
+        _, handler = _capture_logger()
+        run_end_to_end_backtest(
+            run_id="log-2",
+            config=self.config,
+            universe=self.universe,
+            weighting=_weighting(),
+        )
+        self.assertEqual(handler.records, [])
 
 
 if __name__ == "__main__":

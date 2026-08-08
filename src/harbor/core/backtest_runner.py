@@ -21,6 +21,7 @@ Pure core logic: depends only on the domain, config, engine, identity and the
 Phase-3 modules; never touches storage or CLI code.
 """
 
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date
@@ -51,6 +52,7 @@ from harbor.core.ledger import Ledger, apply_fill, convert, credit, deposit, emp
 from harbor.core.market_selector import SelectionRank, SelectionResult
 from harbor.core.order_drafts import generate_order_drafts
 from harbor.core.run_identity import RunIdentity, identity_from_config
+from harbor.core.run_logging import RunLogContext, log_run_event
 from harbor.core.suspension import (
     PositionValuation,
     RefusedOrder,
@@ -558,6 +560,8 @@ def run_end_to_end_backtest(
     data_cutoff: date | None = None,
     code_version: str = "1.0.0",
     weighting: TargetWeightConfig = TargetWeightConfig(),
+    log_context: RunLogContext | None = None,
+    logger: logging.Logger | None = None,
 ) -> BacktestTrace:
     """Run the small end-to-end backtest day by day (SP 2.51).
 
@@ -568,6 +572,10 @@ def run_end_to_end_backtest(
     configuration, the data cutoff (defaults to the config end date) and the
     code version.
 
+    When ``log_context`` and ``logger`` are both supplied, each stage emits
+    structured ``backtest_stage_*`` events carrying the run correlation fields
+    (SP 2.71); otherwise no logging is performed.
+
     Args:
         run_id: The run identifier.
         config: The validated backtest configuration (SP 2.4).
@@ -575,6 +583,8 @@ def run_end_to_end_backtest(
         data_cutoff: The data cutoff date (defaults to ``config.end_date``).
         code_version: The code version.
         weighting: The target-weight rule (default equal weight, no cash).
+        log_context: Optional run-log correlation context (SP 2.71).
+        logger: Optional structured logger for stage events (SP 2.71).
 
     Returns:
         A :class:`BacktestTrace` with the day-by-day results.
@@ -595,6 +605,8 @@ def run_end_to_end_backtest(
             BacktestStep(BacktestStage.VALUATION, _bind(context.valuation, day)),
             BacktestStep(BacktestStage.PERSIST, _bind(context.persist, day)),
         ]
+        if log_context is not None and logger is not None:
+            steps = _logged_steps(steps, logger=logger, log_context=log_context)
         run = run_backtest(run_id=run_id, steps=steps)
         state = run.state
         if not run.succeeded:
@@ -607,3 +619,49 @@ def run_end_to_end_backtest(
         state=state,
         results=tuple(context.results),
     )
+
+
+def _logged_steps(
+    steps: Sequence[BacktestStep],
+    *,
+    logger: logging.Logger,
+    log_context: RunLogContext,
+) -> list[BacktestStep]:
+    """Wrap each pipeline step to emit stage-correlated log events (SP 2.71).
+
+    Each stage emits ``backtest_stage_started`` and ``backtest_stage_completed``
+    events (or ``backtest_stage_failed`` on error) carrying the run correlation
+    fields narrowed to that stage. The wrapper preserves the original handler's
+    warnings and re-raises exceptions for the engine to handle.
+    """
+    wrapped: list[BacktestStep] = []
+    for step in steps:
+        inner = step.run
+        stage = step.stage
+
+        def run(
+            _inner: Callable[[], Sequence[str]] = inner,
+            _stage: BacktestStage = stage,
+        ) -> Sequence[str]:
+            stage_context = log_context.with_stage(_stage)
+            log_run_event(logger, context=stage_context, event="backtest_stage_started")
+            try:
+                warnings = tuple(_inner())
+            except Exception:
+                log_run_event(
+                    logger,
+                    context=stage_context,
+                    event="backtest_stage_failed",
+                    level=logging.ERROR,
+                )
+                raise
+            log_run_event(
+                logger,
+                context=stage_context,
+                event="backtest_stage_completed",
+                warnings=list(warnings),
+            )
+            return warnings
+
+        wrapped.append(BacktestStep(step.stage, run))
+    return wrapped

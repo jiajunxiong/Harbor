@@ -114,6 +114,23 @@ class BacktestRunCliTests(unittest.TestCase):
         self.assertIn("Backtest run failed", stderr.getvalue())
         self.assertIn("boom", stderr.getvalue())
 
+    def test_backtest_run_passes_correlated_logger(self) -> None:
+        from harbor.cli import main
+
+        result = BacktestCommandResult(run_id="run-abc", status=BacktestStatus.COMPLETED)
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = self._config_path(tmp)
+            with (
+                patch.dict(os.environ, self.ENVIRONMENT, clear=True),
+                patch("harbor.cli.create_engine"),
+                patch("harbor.cli.run_backtest_from_config", return_value=result) as run_mock,
+            ):
+                with redirect_stdout(output), redirect_stderr(io.StringIO()):
+                    exit_code = main(["backtest", "run", "--config", config_path])
+        self.assertEqual(exit_code, 0)
+        self.assertIsNotNone(run_mock.call_args.kwargs.get("logger"))
+
     def test_backtest_run_missing_config_is_usage_error(self) -> None:
         from harbor.cli import main
 
@@ -298,6 +315,198 @@ class BacktestReportCliTests(unittest.TestCase):
         self.assertEqual(exit_context.exception.code, 2)
         self.assertIn("Backtest report failed", stderr.getvalue())
         self.assertIn("No backtest run found", stderr.getvalue())
+
+
+class BacktestCancelCliTests(unittest.TestCase):
+    """Verify the ``backtest cancel`` command surface (SP 2.70)."""
+
+    ENVIRONMENT = {
+        "DATABASE_URL": "postgresql+psycopg://harbor:secret@localhost:5432/harbor",
+        "DATA_PROVIDER_HK": "mock",
+        "DATA_PROVIDER_US": "mock",
+    }
+
+    def test_backtest_cancel_prints_cancelled_json(self) -> None:
+        from harbor.cli import main
+
+        result = BacktestCommandResult(run_id="run-1", status=BacktestStatus.CANCELLED)
+        output = io.StringIO()
+        with (
+            patch.dict(os.environ, self.ENVIRONMENT, clear=True),
+            patch("harbor.cli.create_engine"),
+            patch("harbor.cli.cancel_backtest", return_value=result) as cancel_mock,
+        ):
+            with redirect_stdout(output), redirect_stderr(io.StringIO()):
+                exit_code = main(["backtest", "cancel", "run-1"])
+
+        self.assertEqual(exit_code, 0)
+        summary = json.loads(output.getvalue())
+        self.assertEqual(summary, {"run_id": "run-1", "status": "CANCELLED"})
+        cancel_mock.assert_called_once()
+        self.assertEqual(cancel_mock.call_args.kwargs["run_id"], "run-1")
+
+    def test_backtest_cancel_missing_run_id_is_usage_error(self) -> None:
+        from harbor.cli import main
+
+        with patch.dict(os.environ, self.ENVIRONMENT, clear=True):
+            with self.assertRaises(SystemExit) as exit_context:
+                main(["backtest", "cancel"])
+        self.assertEqual(exit_context.exception.code, 2)
+
+    def test_backtest_cancel_failure_is_actionable_error(self) -> None:
+        from harbor.cli import main
+        from harbor.services.backtest import BacktestCancelError
+
+        stderr = io.StringIO()
+        with (
+            patch.dict(os.environ, self.ENVIRONMENT, clear=True),
+            patch("harbor.cli.create_engine"),
+            patch(
+                "harbor.cli.cancel_backtest",
+                side_effect=BacktestCancelError(
+                    "Backtest run 'run-1' (COMPLETED) cannot be cancelled."
+                ),
+            ),
+        ):
+            with self.assertRaises(SystemExit) as exit_context:
+                with redirect_stdout(io.StringIO()), redirect_stderr(stderr):
+                    main(["backtest", "cancel", "run-1"])
+
+        self.assertEqual(exit_context.exception.code, 2)
+        self.assertIn("Backtest cancel failed", stderr.getvalue())
+        self.assertIn("cannot be cancelled", stderr.getvalue())
+
+
+class BacktestResumeCliTests(unittest.TestCase):
+    """Verify the ``backtest resume`` command surface (SP 2.70)."""
+
+    ENVIRONMENT = {
+        "DATABASE_URL": "postgresql+psycopg://harbor:secret@localhost:5432/harbor",
+        "DATA_PROVIDER_HK": "mock",
+        "DATA_PROVIDER_US": "mock",
+    }
+
+    def _config_path(self, tmp: str) -> str:
+        path = Path(tmp) / "strategy.yaml"
+        path.write_text("strategy: shareholder-return\n", encoding="utf-8")
+        return str(path)
+
+    def test_backtest_resume_prints_run_json(self) -> None:
+        from harbor import __version__
+        from harbor.cli import main
+
+        result = BacktestCommandResult(run_id="run-new", status=BacktestStatus.COMPLETED)
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = self._config_path(tmp)
+            with (
+                patch.dict(os.environ, self.ENVIRONMENT, clear=True),
+                patch("harbor.cli.create_engine"),
+                patch(
+                    "harbor.cli.resume_backtest_from_config",
+                    return_value=result,
+                ) as resume_mock,
+            ):
+                with redirect_stdout(output), redirect_stderr(io.StringIO()):
+                    exit_code = main(
+                        ["backtest", "resume", "--config", config_path, "--resume-of", "run-1"]
+                    )
+
+        self.assertEqual(exit_code, 0)
+        summary = json.loads(output.getvalue())
+        self.assertEqual(summary, {"run_id": "run-new", "status": "COMPLETED"})
+        kwargs = resume_mock.call_args.kwargs
+        self.assertEqual(kwargs["config_path"], config_path)
+        self.assertEqual(kwargs["original_run_id"], "run-1")
+        self.assertEqual(kwargs["code_version"], __version__)
+        self.assertIsNone(kwargs["data_cutoff"])
+
+    def test_backtest_resume_passes_code_version_and_cutoff(self) -> None:
+        from harbor.cli import main
+
+        result = BacktestCommandResult(run_id="run-new", status=BacktestStatus.FAILED)
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = self._config_path(tmp)
+            with (
+                patch.dict(os.environ, self.ENVIRONMENT, clear=True),
+                patch("harbor.cli.create_engine"),
+                patch(
+                    "harbor.cli.resume_backtest_from_config",
+                    return_value=result,
+                ) as resume_mock,
+            ):
+                with redirect_stdout(output), redirect_stderr(io.StringIO()):
+                    exit_code = main(
+                        [
+                            "backtest",
+                            "resume",
+                            "--config",
+                            config_path,
+                            "--resume-of",
+                            "run-1",
+                            "--code-version",
+                            "9.9.9",
+                            "--data-cutoff",
+                            "2024-06-30",
+                        ]
+                    )
+        self.assertEqual(exit_code, 0)
+        summary = json.loads(output.getvalue())
+        self.assertEqual(summary, {"run_id": "run-new", "status": "FAILED"})
+        kwargs = resume_mock.call_args.kwargs
+        self.assertEqual(kwargs["code_version"], "9.9.9")
+        self.assertEqual(str(kwargs["data_cutoff"]), "2024-06-30")
+
+    def test_backtest_resume_missing_resume_of_is_usage_error(self) -> None:
+        from harbor.cli import main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = self._config_path(tmp)
+            with patch.dict(os.environ, self.ENVIRONMENT, clear=True):
+                with self.assertRaises(SystemExit) as exit_context:
+                    main(["backtest", "resume", "--config", config_path])
+        self.assertEqual(exit_context.exception.code, 2)
+
+    def test_backtest_resume_missing_config_is_usage_error(self) -> None:
+        from harbor.cli import main
+
+        with patch.dict(os.environ, self.ENVIRONMENT, clear=True):
+            with self.assertRaises(SystemExit) as exit_context:
+                main(["backtest", "resume", "--resume-of", "run-1"])
+        self.assertEqual(exit_context.exception.code, 2)
+
+    def test_backtest_resume_failure_is_actionable_error(self) -> None:
+        from harbor.cli import main
+        from harbor.services.backtest import BacktestResumeError
+
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = self._config_path(tmp)
+            with (
+                patch.dict(os.environ, self.ENVIRONMENT, clear=True),
+                patch("harbor.cli.create_engine"),
+                patch(
+                    "harbor.cli.resume_backtest_from_config",
+                    side_effect=BacktestResumeError("run already completed; reuse it instead."),
+                ),
+            ):
+                with self.assertRaises(SystemExit) as exit_context:
+                    with redirect_stdout(io.StringIO()), redirect_stderr(stderr):
+                        main(
+                            [
+                                "backtest",
+                                "resume",
+                                "--config",
+                                config_path,
+                                "--resume-of",
+                                "run-1",
+                            ]
+                        )
+
+        self.assertEqual(exit_context.exception.code, 2)
+        self.assertIn("Backtest resume failed", stderr.getvalue())
+        self.assertIn("already completed", stderr.getvalue())
 
 
 if __name__ == "__main__":

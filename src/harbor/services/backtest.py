@@ -20,6 +20,7 @@ is a genuine, reconcilable backtest; the factor-based selection pipeline
 """
 
 import json
+import logging
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -31,7 +32,7 @@ from sqlalchemy.engine import Connection
 
 from harbor.core.audit_query import RunAudit, RunRecord, build_run_audit
 from harbor.core.backtest_config import BacktestConfig
-from harbor.core.backtest_config_loader import load_backtest_config
+from harbor.core.backtest_config_loader import config_hash, load_backtest_config
 from harbor.core.backtest_domain import BacktestStatus, Currency, Market, to_market_target
 from harbor.core.backtest_interfaces import DailyQuote, Dividend, TradingCalendar
 from harbor.core.backtest_runner import BacktestTrace, MockUniverse, run_end_to_end_backtest
@@ -40,7 +41,9 @@ from harbor.core.equity import EntitlementEvent
 from harbor.core.html_report import render_html_report
 from harbor.core.market_registry import get_market_config
 from harbor.core.rebalance_schedule import RebalanceSchedule, generate_rebalance_days
+from harbor.core.resume_policy import ResumeAction, can_cancel, decide_resume
 from harbor.core.run_identity import identity_from_config
+from harbor.core.run_logging import RunLogContext, log_run_event
 from harbor.core.stock_pool import StockPool
 from harbor.core.trading_calendar import MarketTradingCalendar
 from harbor.storage.backtest_data_reader import StorageBacktestDataReader
@@ -91,6 +94,16 @@ def _run_markets(config: BacktestConfig) -> tuple[str, ...]:
     return tuple(dict.fromkeys(quota.market.value for quota in config.market_quotas))
 
 
+def _single_market(config: BacktestConfig) -> Market | None:
+    """Return the sole configured market, or None for a cross-market run.
+
+    A single-market run can correlate its logs to one market; a cross-market
+    run spans several so the market field stays None (SP 2.71).
+    """
+    markets = tuple(dict.fromkeys(quota.market for quota in config.market_quotas))
+    return markets[0] if len(markets) == 1 else None
+
+
 def run_backtest_command(
     *,
     config_path: str,
@@ -98,6 +111,8 @@ def run_backtest_command(
     data_cutoff: date | None,
     repository: BacktestRepository,
     universe: MockUniverse,
+    resume_of: str | None = None,
+    logger: logging.Logger | None = None,
 ) -> BacktestCommandResult:
     """Run a backtest from a config file and persist the run and its results.
 
@@ -107,6 +122,12 @@ def run_backtest_command(
         data_cutoff: The data cutoff date; defaults to the config end date.
         repository: The SP 2.6 backtest repository.
         universe: The fixed market data the run executes over (SP 2.51).
+        resume_of: Optional original run id this run resumes from (SP 2.70);
+            the new run always gets its own fresh ``run_id``.
+        logger: Optional structured logger (SP 2.71); when provided the run
+            emits ``backtest_run_*`` lifecycle events and per-stage events
+            carrying ``backtest_run_id``/``strategy_version``/``market``/
+            ``stage``. Config values are never logged.
 
     Returns:
         The run id and final status (COMPLETED or FAILED).
@@ -117,7 +138,7 @@ def run_backtest_command(
     try:
         config = load_backtest_config(config_path)
     except (OSError, ValueError) as error:
-        raise BacktestServiceError(f"Cannot load backtest config: {error}") from error
+        raise BacktestServiceError(f"Cannot load backtest config: {error}.") from error
     cutoff = data_cutoff if data_cutoff is not None else config.end_date
     identity = identity_from_config(config=config, data_cutoff=cutoff, code_version=code_version)
     run_id = uuid.uuid4().hex
@@ -132,7 +153,15 @@ def run_backtest_command(
         data_cutoff=cutoff,
         started_at=started_at,
         status=BacktestStatus.RUNNING.value,
+        resume_of=resume_of,
     )
+    log_context = RunLogContext(
+        run_id=run_id,
+        strategy_version=config.strategy_version,
+        market=_single_market(config),
+    )
+    if logger is not None:
+        log_run_event(logger, context=log_context, event="backtest_run_started")
     finished_at = datetime.now(timezone.utc)
     try:
         trace = run_end_to_end_backtest(
@@ -141,8 +170,18 @@ def run_backtest_command(
             universe=universe,
             data_cutoff=cutoff,
             code_version=code_version,
+            log_context=log_context if logger is not None else None,
+            logger=logger,
         )
     except Exception as error:  # isolation point: record the failure, never crash
+        if logger is not None:
+            log_run_event(
+                logger,
+                context=log_context,
+                event="backtest_run_failed",
+                level=logging.ERROR,
+                error_summary=str(error),
+            )
         repository.update_run(
             run_id=run_id,
             status=BacktestStatus.FAILED.value,
@@ -152,6 +191,14 @@ def run_backtest_command(
         return BacktestCommandResult(run_id=run_id, status=BacktestStatus.FAILED)
     if not trace.succeeded:
         summary = trace.state.diagnostics.error_summary or "backtest failed without a diagnostic"
+        if logger is not None:
+            log_run_event(
+                logger,
+                context=log_context,
+                event="backtest_run_failed",
+                level=logging.ERROR,
+                error_summary=summary,
+            )
         repository.update_run(
             run_id=run_id,
             status=BacktestStatus.FAILED.value,
@@ -160,6 +207,8 @@ def run_backtest_command(
         )
         return BacktestCommandResult(run_id=run_id, status=BacktestStatus.FAILED)
     _persist_results(repository, trace)
+    if logger is not None:
+        log_run_event(logger, context=log_context, event="backtest_run_completed")
     repository.update_run(
         run_id=run_id,
         status=BacktestStatus.COMPLETED.value,
@@ -324,12 +373,14 @@ def run_backtest_from_config(
     code_version: str,
     data_cutoff: date | None,
     connection: Connection,
+    logger: logging.Logger | None = None,
 ) -> BacktestCommandResult:
     """Run a CLI backtest from a config file against the database (SP 2.67).
 
     Loads the configuration, assembles the universe from the storage reader
     (pool-based selections at each rebalance day), executes the run and
-    persists the results within the caller's transaction.
+    persists the results within the caller's transaction. When ``logger`` is
+    supplied, the run emits structured correlation events (SP 2.71).
     """
     config = load_backtest_config(config_path)
     repository = BacktestRepository(connection)
@@ -349,6 +400,98 @@ def run_backtest_from_config(
         data_cutoff=data_cutoff,
         repository=repository,
         universe=universe,
+        logger=logger,
+    )
+
+
+class BacktestCancelError(ValueError):
+    """Raised when a backtest run cannot be cancelled (SP 2.70)."""
+
+
+class BacktestResumeError(ValueError):
+    """Raised when a backtest run cannot be resumed (SP 2.70)."""
+
+
+def cancel_backtest(*, connection: Connection, run_id: str) -> BacktestCommandResult:
+    """Cancel a run that is still initializing or running (SP 2.70).
+
+    Only runs in INITIALIZING or RUNNING may be cancelled (SP 2.46 state
+    machine); terminal runs are left untouched. Returns the run id and the
+    CANCELLED status on success.
+
+    Raises:
+        BacktestCancelError: If the run does not exist or cannot be cancelled.
+    """
+    repository = BacktestRepository(connection)
+    run_rows = [dict(row) for row in connection.execute(repository.get_run(run_id)).mappings()]
+    if not run_rows:
+        raise BacktestCancelError(f"No backtest run found for run id {run_id!r}.")
+    status = BacktestStatus(run_rows[0]["status"])
+    if not can_cancel(status):
+        raise BacktestCancelError(f"Backtest run {run_id!r} ({status.value}) cannot be cancelled.")
+    repository.update_run(
+        run_id=run_id,
+        status=BacktestStatus.CANCELLED.value,
+        finished_at=datetime.now(timezone.utc),
+    )
+    return BacktestCommandResult(run_id=run_id, status=BacktestStatus.CANCELLED)
+
+
+def resume_backtest_from_config(
+    *,
+    config_path: str,
+    code_version: str,
+    data_cutoff: date | None,
+    connection: Connection,
+    original_run_id: str,
+    logger: logging.Logger | None = None,
+) -> BacktestCommandResult:
+    """Resume a failed or cancelled run as a new run linked to the original.
+
+    The resume policy (SP 2.70) is applied: runs still in progress are
+    rejected, completed runs are reused (SP 2.48) and only failed/cancelled
+    runs produce a new run, linked back via ``resume_of``. The resumed config
+    must hash to the original run's config hash. When ``logger`` is supplied,
+    the resumed run emits structured correlation events (SP 2.71).
+
+    Raises:
+        BacktestResumeError: If the run is missing, not resumable or the
+            config does not match the original run.
+    """
+    config = load_backtest_config(config_path)
+    repository = BacktestRepository(connection)
+    run_rows = [
+        dict(row) for row in connection.execute(repository.get_run(original_run_id)).mappings()
+    ]
+    if not run_rows:
+        raise BacktestResumeError(f"No backtest run found for run id {original_run_id!r}.")
+    status = BacktestStatus(run_rows[0]["status"])
+    decision = decide_resume(run_id=original_run_id, status=status)
+    if decision.action is not ResumeAction.NEW_RUN:
+        raise BacktestResumeError(decision.reason)
+    if config_hash(config) != run_rows[0]["config_hash"]:
+        raise BacktestResumeError(
+            "Resume config does not match the original run's configuration hash; "
+            f"refusing to link a new run to {original_run_id!r}."
+        )
+    reader = StorageBacktestDataReader(connection)
+    calendar = MarketTradingCalendar()
+    selections = pool_selections(reader=reader, calendar=calendar, config=config)
+    universe = build_universe(
+        reader=reader,
+        calendar=calendar,
+        config=config,
+        selections=selections,
+        fx_rates=_build_fx_rates(reader, config, calendar),
+    )
+    return run_backtest_command(
+        config_path=config_path,
+        code_version=code_version,
+        data_cutoff=data_cutoff,
+        repository=repository,
+        universe=universe,
+        resume_of=original_run_id,
+        logger=logger,
     )
 
 

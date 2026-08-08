@@ -27,7 +27,13 @@ from harbor.infrastructure.data_providers.factory import (
     print_capability_report,
 )
 from harbor.logging import configure_logging, get_logger
-from harbor.services.backtest import report_backtest, run_backtest_from_config, show_backtest
+from harbor.services.backtest import (
+    cancel_backtest,
+    report_backtest,
+    resume_backtest_from_config,
+    run_backtest_from_config,
+    show_backtest,
+)
 from harbor.storage.repositories import Repository
 
 
@@ -122,6 +128,31 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("json", "csv", "html"),
         default="json",
         help="Report format; defaults to json.",
+    )
+    cancel_parser = backtest_subparsers.add_parser(
+        "cancel", help="Cancel a backtest run that is still initializing or running."
+    )
+    cancel_parser.add_argument("run_id", help="The backtest run id.")
+    resume_parser = backtest_subparsers.add_parser(
+        "resume",
+        help="Resume a failed or cancelled run as a new run linked to the original.",
+    )
+    resume_parser.add_argument(
+        "--config", required=True, help="Path to the strategy configuration (YAML/JSON)."
+    )
+    resume_parser.add_argument(
+        "--resume-of", required=True, help="The original backtest run id to link the resume to."
+    )
+    resume_parser.add_argument(
+        "--code-version",
+        default=__version__,
+        help="Code version recorded with the run; defaults to the package version.",
+    )
+    resume_parser.add_argument(
+        "--data-cutoff",
+        type=date.fromisoformat,
+        default=None,
+        help="Data cutoff date (ISO); defaults to the config end date.",
     )
     return parser
 
@@ -340,6 +371,10 @@ def _show_backtest(parser: argparse.ArgumentParser, arguments: argparse.Namespac
         return _show_backtest_show(parser, arguments)
     if arguments.backtest_command == "report":
         return _show_backtest_report(parser, arguments)
+    if arguments.backtest_command == "cancel":
+        return _show_backtest_cancel(parser, arguments)
+    if arguments.backtest_command == "resume":
+        return _show_backtest_resume(parser, arguments)
     parser.error(f"Unsupported backtest command: {arguments.backtest_command}")
     return 2
 
@@ -354,6 +389,8 @@ def _show_backtest_run(parser: argparse.ArgumentParser, arguments: argparse.Name
     except ValidationError as error:
         parser.error(f"Invalid configuration: {error}")
         return 2
+    configure_logging(settings.log_level)
+    logger = get_logger("backtest")
     try:
         engine = create_engine(settings.database_url)
         with engine.begin() as connection:
@@ -362,6 +399,7 @@ def _show_backtest_run(parser: argparse.ArgumentParser, arguments: argparse.Name
                 code_version=arguments.code_version,
                 data_cutoff=arguments.data_cutoff,
                 connection=connection,
+                logger=logger,
             )
     except (OSError, ValueError) as error:
         parser.error(f"Backtest run failed: {error}")
@@ -408,6 +446,53 @@ def _show_backtest_report(parser: argparse.ArgumentParser, arguments: argparse.N
         parser.error(f"Backtest report failed: {error}")
         return 2
     sys.stdout.write(output + "\n")
+    return 0
+
+
+def _show_backtest_cancel(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """Cancel a backtest run that is still initializing or running (SP 2.70)."""
+    try:
+        settings = Settings()  # type: ignore[call-arg]
+    except ValidationError as error:
+        parser.error(f"Invalid configuration: {error}")
+        return 2
+    try:
+        engine = create_engine(settings.database_url)
+        with engine.begin() as connection:
+            result = cancel_backtest(connection=connection, run_id=arguments.run_id)
+    except (OSError, ValueError) as error:
+        parser.error(f"Backtest cancel failed: {error}")
+        return 2
+    summary = {"run_id": result.run_id, "status": result.status.value}
+    sys.stdout.write(f"{json.dumps(summary, sort_keys=True)}\n")
+    return 0
+
+
+def _show_backtest_resume(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """Resume a failed or cancelled run as a new run linked to the original."""
+    try:
+        settings = Settings()  # type: ignore[call-arg]
+    except ValidationError as error:
+        parser.error(f"Invalid configuration: {error}")
+        return 2
+    configure_logging(settings.log_level)
+    logger = get_logger("backtest")
+    try:
+        engine = create_engine(settings.database_url)
+        with engine.begin() as connection:
+            result = resume_backtest_from_config(
+                config_path=arguments.config,
+                code_version=arguments.code_version,
+                data_cutoff=arguments.data_cutoff,
+                connection=connection,
+                original_run_id=arguments.resume_of,
+                logger=logger,
+            )
+    except (OSError, ValueError) as error:
+        parser.error(f"Backtest resume failed: {error}")
+        return 2
+    summary = {"run_id": result.run_id, "status": result.status.value}
+    sys.stdout.write(f"{json.dumps(summary, sort_keys=True)}\n")
     return 0
 
 
