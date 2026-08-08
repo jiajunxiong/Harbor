@@ -49,6 +49,7 @@ src/harbor/core/factor_volatility.py
 src/harbor/core/fill_price.py
 src/harbor/core/fx.py
 src/harbor/core/history_window.py
+src/harbor/core/html_report.py
 src/harbor/core/ingestion.py
 src/harbor/core/interfaces.py
 src/harbor/core/ledger.py
@@ -138,6 +139,7 @@ tests/test_financial_checks.py
 tests/test_fx.py
 tests/test_fx_repository.py
 tests/test_history_window.py
+tests/test_html_report.py
 tests/test_ingestion.py
 tests/test_integration.py
 tests/test_interfaces.py
