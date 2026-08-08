@@ -14,6 +14,7 @@ import unittest
 from pathlib import Path
 
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.engine import Engine
 
 from harbor.storage.models import Base
 
@@ -90,6 +91,34 @@ def _migrated_schema() -> tuple[dict[str, list[str]], set[str]]:
         tables.update(_create_table_defs(ast.parse(source)))
         views.update(_create_view_names(source))
     return tables, views
+
+
+def _fresh_engine() -> Engine:
+    """Return an engine bound to a disposable, freshly-emptied schema."""
+    engine = create_engine(_TEST_DATABASE_URL)
+    with engine.begin() as connection:
+        connection.execute(text("DROP SCHEMA public CASCADE"))
+        connection.execute(text("CREATE SCHEMA public"))
+    return engine
+
+
+def _upgrade_to_head(engine: Engine) -> None:
+    """Apply all Alembic migrations to ``engine``'s database (SP 1.99 / 2.77)."""
+    from alembic.config import Config
+
+    from alembic import command
+
+    config = Config(str(_PROJECT_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(_ALEMBIC_DIR))
+    original_url = os.environ.get("DATABASE_URL")
+    os.environ["DATABASE_URL"] = _TEST_DATABASE_URL
+    try:
+        command.upgrade(config, "head")
+    finally:
+        if original_url is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = original_url
 
 
 class MigrationChainTests(unittest.TestCase):
@@ -174,27 +203,8 @@ class MigrationRunTests(unittest.TestCase):
     """
 
     def test_upgrade_head_creates_all_tables_with_composite_pks(self) -> None:
-        from alembic.config import Config
-
-        from alembic import command
-
-        engine = create_engine(_TEST_DATABASE_URL)
-        with engine.begin() as connection:
-            connection.execute(text("DROP SCHEMA public CASCADE"))
-            connection.execute(text("CREATE SCHEMA public"))
-
-        config = Config(str(_PROJECT_ROOT / "alembic.ini"))
-        config.set_main_option("script_location", str(_ALEMBIC_DIR))
-
-        original_url = os.environ.get("DATABASE_URL")
-        os.environ["DATABASE_URL"] = _TEST_DATABASE_URL
-        try:
-            command.upgrade(config, "head")
-        finally:
-            if original_url is None:
-                os.environ.pop("DATABASE_URL", None)
-            else:
-                os.environ["DATABASE_URL"] = original_url
+        engine = _fresh_engine()
+        _upgrade_to_head(engine)
 
         inspector = inspect(engine)
         created_tables = set(inspector.get_table_names())
@@ -208,3 +218,177 @@ class MigrationRunTests(unittest.TestCase):
                 if len(expected) > 1:
                     pk = inspector.get_pk_constraint(name)["constrained_columns"]
                     self.assertEqual(tuple(pk), expected, msg=f"composite PK for {name}")
+
+
+class BacktestAndFxSchemaDeclarationTests(unittest.TestCase):
+    """Verify the backtest + FX migrations declare their constraints and indexes.
+
+    These checks are database-free and run everywhere; the live equivalent is
+    :class:`BacktestAndFxMigrationRunTests` (SP 2.77).
+    """
+
+    def _source(self, stem: str) -> str:
+        return (_VERSIONS_DIR / f"{stem}.py").read_text(encoding="utf-8")
+
+    def test_backtest_runs_declares_status_check_and_pk(self) -> None:
+        source = self._source("0017_create_backtest_runs")
+        self.assertIn("ck_backtest_runs_status", source)
+        self.assertIn("pk_backtest_runs", source)
+
+    def test_backtest_results_declare_constraints_and_indexes(self) -> None:
+        source = self._source("0018_create_backtest_results")
+        for name in (
+            "fk_backtest_net_values_run",
+            "uq_backtest_net_values_day_currency",
+            "ck_backtest_fills_side",
+            "ix_backtest_fills_run_date",
+            "fk_backtest_positions_run",
+            "uq_backtest_positions_holding",
+            "ck_backtest_rejected_trades_side",
+            "ix_backtest_rejected_trades_run_market",
+            "uq_backtest_rebalances_day",
+            "uq_backtest_metrics_name_date",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(name, source)
+
+    def test_fx_rates_declares_constraints_and_composite_pk(self) -> None:
+        source = self._source("0020_create_fx_rates")
+        for name in (
+            "pk_fx_rates",
+            "ck_fx_rates_from_currency",
+            "ck_fx_rates_to_currency",
+            "ck_fx_rates_quality",
+            "ck_fx_rates_rate_positive",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(name, source)
+
+    def test_factor_snapshots_declare_constraints_and_indexes(self) -> None:
+        source = self._source("0021_create_factor_snapshots")
+        for name in (
+            "ck_backtest_factor_snapshots_market",
+            "fk_backtest_factor_snapshots_run",
+            "uq_backtest_factor_snapshots_symbol",
+            "ix_backtest_factor_snapshots_run_date",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(name, source)
+
+    def test_resume_of_column_is_migrated(self) -> None:
+        self.assertIn("resume_of", self._source("0022_add_backtest_runs_resume_of"))
+
+
+@unittest.skipUnless(_TEST_DATABASE_URL, "HARBOR_TEST_DATABASE_URL is not set")
+class BacktestAndFxMigrationRunTests(unittest.TestCase):
+    """Upgrade a fresh DB and verify backtest + FX constraints and indexes (SP 2.77)."""
+
+    _TABLES = (
+        "backtest_runs",
+        "backtest_net_values",
+        "backtest_positions",
+        "backtest_fills",
+        "backtest_rebalances",
+        "backtest_metrics",
+        "backtest_rejected_trades",
+        "backtest_factor_snapshots",
+        "fx_rates",
+    )
+    _RESULT_TABLES = (
+        "backtest_net_values",
+        "backtest_positions",
+        "backtest_fills",
+        "backtest_rebalances",
+        "backtest_metrics",
+        "backtest_rejected_trades",
+        "backtest_factor_snapshots",
+    )
+
+    def setUp(self) -> None:
+        self.engine = _fresh_engine()
+        _upgrade_to_head(self.engine)
+        self.inspector = inspect(self.engine)
+
+    def test_all_backtest_and_fx_tables_exist(self) -> None:
+        created = set(self.inspector.get_table_names())
+        for table in self._TABLES:
+            with self.subTest(table=table):
+                self.assertIn(table, created)
+
+    def test_primary_keys_are_created(self) -> None:
+        self.assertEqual(
+            self.inspector.get_pk_constraint("backtest_runs")["constrained_columns"],
+            ["run_id"],
+        )
+        self.assertEqual(
+            self.inspector.get_pk_constraint("fx_rates")["constrained_columns"],
+            ["from_currency", "to_currency", "date"],
+        )
+        for table in self._RESULT_TABLES:
+            with self.subTest(table=table):
+                self.assertEqual(
+                    self.inspector.get_pk_constraint(table)["constrained_columns"], ["id"]
+                )
+
+    def test_check_constraints_are_created(self) -> None:
+        names = {
+            check["name"]
+            for table in self._TABLES
+            for check in self.inspector.get_check_constraints(table)
+        }
+        for expected in (
+            "ck_backtest_runs_status",
+            "ck_backtest_fills_side",
+            "ck_backtest_rejected_trades_side",
+            "ck_backtest_factor_snapshots_market",
+            "ck_fx_rates_from_currency",
+            "ck_fx_rates_to_currency",
+            "ck_fx_rates_quality",
+            "ck_fx_rates_rate_positive",
+        ):
+            with self.subTest(name=expected):
+                self.assertIn(expected, names)
+
+    def test_foreign_keys_are_created(self) -> None:
+        names = {
+            fk["name"] for table in self._TABLES for fk in self.inspector.get_foreign_keys(table)
+        }
+        for expected in (
+            "fk_backtest_net_values_run",
+            "fk_backtest_positions_run",
+            "fk_backtest_fills_run",
+            "fk_backtest_rebalances_run",
+            "fk_backtest_metrics_run",
+            "fk_backtest_rejected_trades_run",
+            "fk_backtest_factor_snapshots_run",
+        ):
+            with self.subTest(name=expected):
+                self.assertIn(expected, names)
+
+    def test_unique_constraints_are_created(self) -> None:
+        names = {
+            unique["name"]
+            for table in self._TABLES
+            for unique in self.inspector.get_unique_constraints(table)
+        }
+        for expected in (
+            "uq_backtest_net_values_day_currency",
+            "uq_backtest_positions_holding",
+            "uq_backtest_rebalances_day",
+            "uq_backtest_metrics_name_date",
+            "uq_backtest_factor_snapshots_symbol",
+        ):
+            with self.subTest(name=expected):
+                self.assertIn(expected, names)
+
+    def test_explicit_indexes_are_created(self) -> None:
+        names = {
+            index["name"] for table in self._TABLES for index in self.inspector.get_indexes(table)
+        }
+        for expected in (
+            "ix_backtest_fills_run_date",
+            "ix_backtest_rejected_trades_run_market",
+            "ix_backtest_factor_snapshots_run_date",
+        ):
+            with self.subTest(name=expected):
+                self.assertIn(expected, names)
