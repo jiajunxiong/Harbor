@@ -148,6 +148,7 @@ tests/test_factor_dividend_yield.py
 tests/test_factor_drawdown_liquidity.py
 tests/test_factor_earnings_quality.py
 tests/test_factor_scoring.py
+tests/test_factor_selection_suite.py
 tests/test_factor_snapshot.py
 tests/test_factor_standardization.py
 tests/test_factor_unit_suite.py
