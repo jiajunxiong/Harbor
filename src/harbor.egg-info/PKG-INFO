@@ -332,12 +332,103 @@ harbor-cli quality report --market US --csv issues.csv
 
 ---
 
+## 🧪 研究回测（MVP 2）
+
+> 回测结果仅用于研究，**不构成投资建议**，也不表示未来收益或回撤。
+
+### 依赖安装（回测可选依赖）
+
+基础安装见上方“快速开始”。回测与因子计算额外依赖 `numba` 与 `vectorbt`（SP 2.1），
+开发与静态检查工具属于 `dev` extra：
+
+```bash
+# 回测可选依赖（含 harbor-cli 入口）
+pip install -e ".[backtest]"
+
+# 开发依赖：mypy / pytest / ruff / types-PyYAML
+pip install -e ".[dev]"
+```
+
+### 数据库迁移
+
+回测运行主表、结果表与汇率表由 Alembic 迁移创建（SP 2.6 / 2.7 / 2.12）。
+在已激活的虚拟环境中（`alembic` 读取 `DATABASE_URL`，不会自动读取 `.env`）：
+
+```bash
+set -a && source .env && set +a
+alembic upgrade head
+```
+
+### 策略配置
+
+回测使用**版本化策略配置**（YAML 或 JSON，SP 2.5），定义市场、日期区间、基准币种、
+调仓频率、资金、成本、风控与执行规则。仓库内置**保守示例**（SP 2.72），研究用途与
+假设见各文件头部注释：
+
+```text
+examples/configs/
+├── hk_quarterly.yaml            # 港股 15 只，季度调仓，HKD
+├── us_quarterly.yaml            # 美股 15 只，季度调仓，USD
+├── us_quarterly.json            # 与 us_quarterly.yaml 等价的 JSON 示例
+├── cross_market_quarterly.yaml  # 港股 10 + 美股 10，季度调仓，HKD
+└── README.md                    # 示例用途、假设与运行方式
+```
+
+配置经校验后生成稳定 `config_hash`（SP 2.5）；**相同配置 + 相同数据截止 + 相同代码
+版本 = 同一研究运行**（幂等语义，SP 2.48）。
+
+### 运行与状态
+
+```bash
+# 运行回测（返回 run_id 与状态）
+harbor-cli backtest run --config examples/configs/hk_quarterly.yaml
+harbor-cli backtest run --config examples/configs/us_quarterly.json --code-version 0.1.0
+
+# 展示配置摘要、数据范围、状态与核心指标
+harbor-cli backtest show <run-id>
+```
+
+### 取消与恢复
+
+```bash
+# 运行中（INITIALIZING/RUNNING）可安全取消
+harbor-cli backtest cancel <run-id>
+
+# 失败/取消的运行恢复为“新运行”并关联原运行（绝不静默续跑，SP 2.70）
+harbor-cli backtest resume --config examples/configs/hk_quarterly.yaml --resume-of <run-id>
+```
+
+### 报告导出
+
+```bash
+# JSON（默认） / CSV / HTML
+harbor-cli backtest report <run-id> --format json
+harbor-cli backtest report <run-id> --format csv
+harbor-cli backtest report <run-id> --format html
+```
+
+### 重放与一致性
+
+- 相同输入（配置哈希、数据边界、代码版本）重复执行 → 一致的信号、成交、净值与指标
+  （SP 2.61 可重放清单 / SP 2.62 一致性校验）。
+- 结果可通过 `backtest_run_id` 查询与导出（SP 2.66 研究审计 / SP 2.58 JSON 产物），
+  结构化日志亦携带 `backtest_run_id`（SP 2.71）。
+
+### 默认参数与研究限制
+
+- **默认参数**（成本、滑点、流动性、汇率与因子缺失的默认处理——是研究假设，**不是
+  市场事实**）见 [`docs/backtest_default_parameters.md`](docs/backtest_default_parameters.md)（SP 2.73）。
+- **回测限制**（数据覆盖、历史股票池、企业行动、FX、日历、停牌估值与基准数据的限制）
+  见 [`docs/backtest_limitations.md`](docs/backtest_limitations.md)（SP 2.74）。
+
+---
+
 ## 📊 开发状态
 
 | MVP 阶段 | 状态 | 预计完成 |
 | :--- | :--- | :--- |
 | MVP 1：数据基础 | ✅ 已完成 | 2026年8月 |
-| MVP 2：研究回测 | 📋 规划中 | — |
+| MVP 2：研究回测 | 📋 进行中 | — |
 | MVP 3：样本外验证 | 📋 规划中 | — |
 | MVP 4：模拟盘闭环 | 📋 规划中 | — |
 | MVP 5：实盘评估 | 📋 规划中 | — |
