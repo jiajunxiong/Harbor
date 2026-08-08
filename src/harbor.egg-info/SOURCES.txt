@@ -109,6 +109,7 @@ tests/test_backtest_data_reader.py
 tests/test_backtest_dependencies.py
 tests/test_backtest_domain.py
 tests/test_backtest_engine.py
+tests/test_backtest_failure_usability.py
 tests/test_backtest_interfaces.py
 tests/test_backtest_limitations.py
 tests/test_backtest_repositories.py
