@@ -110,6 +110,7 @@ tests/test_backtest_dependencies.py
 tests/test_backtest_domain.py
 tests/test_backtest_engine.py
 tests/test_backtest_interfaces.py
+tests/test_backtest_limitations.py
 tests/test_backtest_repositories.py
 tests/test_backtest_service.py
 tests/test_backtest_state_machine.py
