@@ -200,6 +200,7 @@ tests/test_review_queue.py
 tests/test_run_identity.py
 tests/test_run_logging.py
 tests/test_selection_report.py
+tests/test_static_checks.py
 tests/test_stock_pool.py
 tests/test_survivorship_bias.py
 tests/test_suspension.py
