@@ -175,6 +175,7 @@ tests/test_metrics_boundaries.py
 tests/test_migrations.py
 tests/test_mock_provider.py
 tests/test_models.py
+tests/test_mvp2_acceptance_record.py
 tests/test_ohlc_checks.py
 tests/test_order_drafts.py
 tests/test_performance_baseline.py
