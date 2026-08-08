@@ -2,8 +2,10 @@
 
 Renders the SP 2.58 results artifact as a self-contained HTML research report
 containing a summary (摘要), an embedded net-value chart (图表数据), the key
-risks (主要风险, drawdown events and warnings), the data coverage (数据覆盖)
-and the documented known assumptions (已知假设).
+risks (主要风险, drawdown events and warnings), the data coverage (数据覆盖),
+the documented known assumptions (已知假设), and — when a correlation report
+is supplied (SP 2.65) — the MVP 1 data-quality findings and precheck warnings
+scoped to the data actually used (数据质量关联).
 
 The report is research-only and never implies a return promise: a disclaimer
 and the assumptions section state that the output is not investment advice and
@@ -18,6 +20,8 @@ touches storage or CLI code.
 import html
 import json
 from typing import Any
+
+from harbor.core.quality_correlation import QualityCorrelationReport
 
 
 class ReportError(ValueError):
@@ -199,6 +203,40 @@ def _coverage_section(data: dict[str, Any]) -> str:
     )
 
 
+def _quality_section(report: QualityCorrelationReport) -> str:
+    """Render the SP 2.65 data-quality correlation as an HTML section."""
+    parts: list[str] = ['<section id="quality"><h2>数据质量关联 (Data Quality Correlation)</h2>']
+    summary = (
+        f"未解决 MVP 1 质量问题 (unresolved) {report.unresolved_count} · "
+        f"已解决 (resolved) {report.resolved_count} · "
+        f"预检告警 (precheck warnings) {report.precheck_warning_count} · "
+        f"预检错误 (precheck errors) {report.precheck_error_count}"
+    )
+    parts.append(f'<p class="note">{_esc(summary)}</p>')
+    if not report.has_findings:
+        parts.append(
+            '<p class="note">使用数据无已知质量问题 '
+            "(no known quality findings for the data used).</p>"
+        )
+    else:
+        parts.append(
+            "<table><tr><th>来源</th><th>级别</th><th>范围</th><th>检查</th><th>说明</th></tr>"
+        )
+        for finding in report.findings:
+            parts.append(
+                "<tr>"
+                f"<td>{_esc(finding.source.value)}</td>"
+                f"<td>{_esc(finding.severity.value)}</td>"
+                f"<td>{_esc(finding.scope)}</td>"
+                f"<td>{_esc(finding.check_name)}</td>"
+                f"<td>{_esc(finding.details)}</td>"
+                "</tr>"
+            )
+        parts.append("</table>")
+    parts.append("</section>")
+    return "\n".join(parts)
+
+
 def _performance_section(artifact: dict[str, Any]) -> str:
     performance = artifact["metrics"].get("performance")
     if performance is None:
@@ -290,12 +328,15 @@ def render_html_report(
     artifact: dict[str, Any],
     *,
     title: str | None = None,
+    quality: QualityCorrelationReport | None = None,
 ) -> str:
     """Render an SP 2.58 artifact as a self-contained HTML report (SP 2.60).
 
     Args:
         artifact: The SP 2.58 results artifact.
         title: Optional document title; defaults to a run-based title.
+        quality: Optional SP 2.65 data-quality correlation to render in the
+            data-quality section; omitted when ``None``.
 
     Returns:
         The full HTML document, with the chart data embedded as JSON in
@@ -303,17 +344,17 @@ def render_html_report(
     """
     data = build_report_data(artifact)
     title_text = title or f"Backtest report {data['run_id']}"
-    body = "\n".join(
-        [
-            _header_section(data),
-            _summary_section(data),
-            _performance_section(artifact),
-            _risk_section(artifact),
-            _coverage_section(data),
-            _assumptions_section(),
-            _chart_section(data),
-        ]
-    )
+    sections = [
+        _header_section(data),
+        _summary_section(data),
+        _performance_section(artifact),
+        _risk_section(artifact),
+        _coverage_section(data),
+    ]
+    if quality is not None:
+        sections.append(_quality_section(quality))
+    sections.extend([_assumptions_section(), _chart_section(data)])
+    body = "\n".join(sections)
     chart_json = json.dumps(
         {"run_id": data["run_id"], "net_values": data["net_values"]}, sort_keys=True
     )
