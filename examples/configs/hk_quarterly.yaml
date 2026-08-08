@@ -1,0 +1,54 @@
+# 港股季度调仓示例策略配置 (HK Quarterly Example Strategy Configuration)
+#
+# 研究用途 (Research purpose):
+#   本配置仅用于 Harbor 研究回测引擎的演示、验证与教学，不构成投资建议，
+#   也不表示任何未来收益或回撤承诺。它演示的是“保守研究假设”，而非可交易参数。
+#
+# 关键假设 (Key assumptions) — 请在正式研究前逐条核对：
+#   - 策略：季度调仓、长仓（long-only）、目标 15 只港股、单市场等权（weight=1.0）。
+#   - 基准币种：HKD；初始资金 1000 万 HKD，属演示规模。
+#   - 成本、手数、费率与滑点为研究假设，不是交易所或券商公布的市场事实
+#     （详见 SP 2.73 默认参数说明 / SP 2.74 回测限制说明）。
+#   - 交易日历使用内置演示节假日（SP 2.11），不代表港交所实际假期。
+#   - 选股目前使用股票池默认等权选择（SP 2.67）；因子管线（SP 2.15-2.28）尚未接入。
+#   - 港股成交模型（SP 2.37）不把滑点计入费用，故 slippage_bps 设为 0。
+
+strategy: shareholder-return
+strategy_version: "1.0.0"
+description: "HK quarterly long-only example (15 stocks), research only"
+markets:
+  - HK
+market_quotas:
+  - market: HK
+    target_count: 15
+    weight: 1.0
+start_date: "2019-01-01"
+end_date: "2024-12-31"
+base_currency: HKD
+rebalance_frequency: quarterly
+initial_capital: 10000000
+cost:
+  commission_rate: 0.0005
+  min_commission: 10
+  stamp_duty_rate: 0.001
+  transaction_levy_rate: 0.000027
+  trading_fee_rate: 0.0000565
+  regulatory_fee_rate: 0.0
+  slippage_bps: 0
+  lot_size: 100
+risk:
+  max_position_pct: 0.1
+  max_market_pct: 1.0
+  min_cash_pct: 0.02
+fill:
+  fill_rule: close
+volume:
+  participation_rate: 0.2
+  on_unfilled: cancel
+suspension:
+  valuation: last_price
+  warn: true
+dividend:
+  include_special: false
+benchmark:
+  kind: cash

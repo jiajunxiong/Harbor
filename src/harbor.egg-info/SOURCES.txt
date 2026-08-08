@@ -136,6 +136,7 @@ tests/test_drawdown_events.py
 tests/test_end_to_end_backtest.py
 tests/test_equity.py
 tests/test_equity_events.py
+tests/test_example_configs.py
 tests/test_exposure.py
 tests/test_factor_alignment.py
 tests/test_factor_dividend_sustainability.py

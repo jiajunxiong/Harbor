@@ -1,0 +1,55 @@
+# 美股季度调仓示例策略配置 (US Quarterly Example Strategy Configuration)
+#
+# 研究用途 (Research purpose):
+#   本配置仅用于 Harbor 研究回测引擎的演示、验证与教学，不构成投资建议，
+#   也不表示任何未来收益或回撤承诺。它演示的是“保守研究假设”，而非可交易参数。
+#
+# 关键假设 (Key assumptions) — 请在正式研究前逐条核对：
+#   - 策略：季度调仓、长仓（long-only）、目标 15 只美股、单市场等权（weight=1.0）。
+#   - 基准币种：USD；初始资金 100 万美元，属演示规模。
+#   - 成本、费率与滑点为研究假设，不是交易所或券商公布的市场事实
+#     （详见 SP 2.73 默认参数说明 / SP 2.74 回测限制说明）。
+#   - 美股支持碎股（lot_size=1）；监管费（regulatory_fee_rate）仅按卖出方向计
+#     （SEC 规则，SP 2.38）；滑点按成交方向计入费用（SP 2.38/2.39）。
+#   - 交易日历使用内置演示节假日（SP 2.11），不代表纽交所/纳斯达克实际假期。
+#   - 选股目前使用股票池默认等权选择（SP 2.67）；因子管线（SP 2.15-2.28）尚未接入。
+
+strategy: shareholder-return
+strategy_version: "1.0.0"
+description: "US quarterly long-only example (15 stocks), research only"
+markets:
+  - US
+market_quotas:
+  - market: US
+    target_count: 15
+    weight: 1.0
+start_date: "2019-01-01"
+end_date: "2024-12-31"
+base_currency: USD
+rebalance_frequency: quarterly
+initial_capital: 1000000
+cost:
+  commission_rate: 0.0005
+  min_commission: 1
+  stamp_duty_rate: 0.0
+  transaction_levy_rate: 0.0
+  trading_fee_rate: 0.0
+  regulatory_fee_rate: 0.0000278
+  slippage_bps: 5
+  lot_size: 1
+risk:
+  max_position_pct: 0.1
+  max_market_pct: 1.0
+  min_cash_pct: 0.02
+fill:
+  fill_rule: close
+volume:
+  participation_rate: 0.2
+  on_unfilled: cancel
+suspension:
+  valuation: last_price
+  warn: true
+dividend:
+  include_special: false
+benchmark:
+  kind: cash

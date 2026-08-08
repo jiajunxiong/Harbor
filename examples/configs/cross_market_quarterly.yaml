@@ -1,0 +1,59 @@
+# 跨市场季度调仓示例策略配置 (Cross-Market Quarterly Example Strategy Configuration)
+#
+# 研究用途 (Research purpose):
+#   本配置仅用于 Harbor 研究回测引擎的演示、验证与教学，不构成投资建议，
+#   也不表示任何未来收益或回撤承诺。它演示的是“保守研究假设”，而非可交易参数。
+#
+# 关键假设 (Key assumptions) — 请在正式研究前逐条核对：
+#   - 策略：季度调仓、长仓（long-only）、港股 10 只 + 美股 10 只（合计 20 只）。
+#   - 基准币种：HKD；初始资金 1000 万 HKD，属演示规模。
+#   - 市场配额：HK 50% / US 50%（权重之和须为 1.0，SP 2.4 校验）。
+#   - 跨市场组合需要逐日的 HKD↔USD 汇率数据；缺少 FX 时引擎拒绝生成跨市场净值
+#     （SP 2.27/2.45），而不是默认 1:1 换算。运行前请先采集 FX 数据。
+#   - 成本、费率与滑点为研究假设，不是市场事实（详见 SP 2.73/2.74）。
+#   - 交易日历使用内置演示节假日（SP 2.11），不代表两地交易所实际假期。
+#   - 选股目前使用股票池默认等权选择（SP 2.67）；因子管线（SP 2.15-2.28）尚未接入。
+
+strategy: shareholder-return
+strategy_version: "1.0.0"
+description: "Cross-market (HK+US) quarterly long-only example (20 stocks), research only"
+markets:
+  - HK
+  - US
+market_quotas:
+  - market: HK
+    target_count: 10
+    weight: 0.5
+  - market: US
+    target_count: 10
+    weight: 0.5
+start_date: "2019-01-01"
+end_date: "2024-12-31"
+base_currency: HKD
+rebalance_frequency: quarterly
+initial_capital: 10000000
+cost:
+  commission_rate: 0.0005
+  min_commission: 10
+  stamp_duty_rate: 0.001
+  transaction_levy_rate: 0.000027
+  trading_fee_rate: 0.0000565
+  regulatory_fee_rate: 0.0000278
+  slippage_bps: 5
+  lot_size: 100
+risk:
+  max_position_pct: 0.1
+  max_market_pct: 0.55
+  min_cash_pct: 0.02
+fill:
+  fill_rule: close
+volume:
+  participation_rate: 0.2
+  on_unfilled: cancel
+suspension:
+  valuation: last_price
+  warn: true
+dividend:
+  include_special: false
+benchmark:
+  kind: cash
