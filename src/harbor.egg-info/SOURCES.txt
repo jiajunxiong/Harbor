@@ -54,6 +54,7 @@ src/harbor/core/html_report.py
 src/harbor/core/ingestion.py
 src/harbor/core/interfaces.py
 src/harbor/core/ledger.py
+src/harbor/core/ledger_reconciliation.py
 src/harbor/core/market_registry.py
 src/harbor/core/market_selector.py
 src/harbor/core/order_drafts.py
@@ -147,6 +148,7 @@ tests/test_ingestion.py
 tests/test_integration.py
 tests/test_interfaces.py
 tests/test_ledger.py
+tests/test_ledger_reconciliation.py
 tests/test_logging.py
 tests/test_lookahead_protection.py
 tests/test_market_registry.py
