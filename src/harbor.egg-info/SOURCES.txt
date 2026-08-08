@@ -31,6 +31,7 @@ src/harbor/core/corporate_actions.py
 src/harbor/core/cost_hk.py
 src/harbor/core/cost_us.py
 src/harbor/core/cross_market_merge.py
+src/harbor/core/csv_export.py
 src/harbor/core/data_readiness.py
 src/harbor/core/dividend_processing.py
 src/harbor/core/drawdown_events.py
@@ -112,6 +113,7 @@ tests/test_cost_hk.py
 tests/test_cost_us.py
 tests/test_coverage_checks.py
 tests/test_cross_market_merge.py
+tests/test_csv_export.py
 tests/test_data_readiness.py
 tests/test_dividend_checks.py
 tests/test_dividend_processing.py
