@@ -106,6 +106,7 @@ tests/test_backtest_cli.py
 tests/test_backtest_config.py
 tests/test_backtest_config_loader.py
 tests/test_backtest_data_reader.py
+tests/test_backtest_data_reader_integration.py
 tests/test_backtest_dependencies.py
 tests/test_backtest_domain.py
 tests/test_backtest_engine.py
