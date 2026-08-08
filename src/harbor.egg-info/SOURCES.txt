@@ -200,6 +200,7 @@ tests/test_research_smoke.py
 tests/test_result_export.py
 tests/test_resume_policy.py
 tests/test_review_queue.py
+tests/test_risk_boundary_review.py
 tests/test_run_identity.py
 tests/test_run_logging.py
 tests/test_selection_report.py
