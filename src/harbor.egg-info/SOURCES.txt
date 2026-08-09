@@ -80,6 +80,7 @@ src/harbor/core/target_weight.py
 src/harbor/core/trade_metrics.py
 src/harbor/core/trading_calendar.py
 src/harbor/core/validation.py
+src/harbor/core/validation_domain.py
 src/harbor/core/valuation.py
 src/harbor/core/volume_limit.py
 src/harbor/infrastructure/__init__.py
@@ -213,6 +214,7 @@ tests/test_target_weight.py
 tests/test_trade_metrics.py
 tests/test_trading_calendar.py
 tests/test_validation.py
+tests/test_validation_domain.py
 tests/test_valuation.py
 tests/test_volume_limit.py
 tests/test_yfinance_contract.py
