@@ -92,6 +92,7 @@ src/harbor/core/training_fit.py
 src/harbor/core/trial_budget.py
 src/harbor/core/trial_registry.py
 src/harbor/core/validation.py
+src/harbor/core/validation_apply.py
 src/harbor/core/validation_config.py
 src/harbor/core/validation_config_loader.py
 src/harbor/core/validation_domain.py
@@ -244,6 +245,7 @@ tests/test_training_fit.py
 tests/test_trial_budget.py
 tests/test_trial_registry.py
 tests/test_validation.py
+tests/test_validation_apply.py
 tests/test_validation_config.py
 tests/test_validation_config_loader.py
 tests/test_validation_domain.py
