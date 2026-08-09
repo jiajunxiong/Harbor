@@ -91,6 +91,7 @@ src/harbor/core/validation_config.py
 src/harbor/core/validation_config_loader.py
 src/harbor/core/validation_domain.py
 src/harbor/core/validation_split.py
+src/harbor/core/validation_state_machine.py
 src/harbor/core/valuation.py
 src/harbor/core/volume_limit.py
 src/harbor/infrastructure/__init__.py
@@ -237,6 +238,7 @@ tests/test_validation_config_loader.py
 tests/test_validation_domain.py
 tests/test_validation_repositories.py
 tests/test_validation_split.py
+tests/test_validation_state_machine.py
 tests/test_valuation.py
 tests/test_volume_limit.py
 tests/test_yfinance_contract.py
