@@ -214,6 +214,7 @@ tests/test_mvp2_acceptance_record.py
 tests/test_mvp_status_update.py
 tests/test_ohlc_checks.py
 tests/test_order_drafts.py
+tests/test_parameter_budget.py
 tests/test_parameter_constraints.py
 tests/test_parameter_space.py
 tests/test_performance_baseline.py
