@@ -622,6 +622,302 @@ class BacktestFactorSnapshot(Base):
     exclusion_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
+class ValidationRun(Base):
+    """A master record of one out-of-sample validation run (MVP 3 / SP 3.12).
+
+    Records the frozen validation configuration snapshot, its stable hash
+    (SP 3.3), the code version and the lifecycle status (SP 3.13 state
+    machine) so every validation run is traceable and replayable. A run may
+    span multiple markets (HK, US or cross-market), so the table is keyed by
+    ``run_id`` alone. ``test_set_id`` links the run to its registered
+    independent holdout version (SP 3.5 / 3.42) once one is assigned.
+    """
+
+    __tablename__ = "validation_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ("
+            "'DRAFT', 'DATA_FROZEN', 'TUNING', 'TEST_LOCKED', "
+            "'EVALUATED', 'NOT_QUALIFIED', 'FAILED'"
+            ")",
+            name="ck_validation_runs_status",
+        ),
+    )
+
+    run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    config_snapshot: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    code_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    test_set_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ValidationManifest(Base):
+    """The frozen dataset manifest of a validation run (MVP 3 / SP 3.12).
+
+    One row per run (keyed by ``validation_run_id``) mirroring the SP 3.6
+    ``DatasetManifest``: markets, base currency, query boundaries, data
+    cutoff, config/code/calendar/FX versions, the SP 3.7 fingerprint and the
+    per-component query records (JSONB list of dicts). The fingerprint ties a
+    run's artifacts to exactly the data they were computed from.
+    """
+
+    __tablename__ = "validation_manifests"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["validation_run_id"],
+            ["validation_runs.run_id"],
+            name="fk_validation_manifests_run",
+        ),
+    )
+
+    validation_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    markets: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    base_currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    data_cutoff: Mapped[date] = mapped_column(Date, nullable=False)
+    config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    code_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    calendar_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    fx_source: Mapped[str] = mapped_column(String(64), nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    random_seed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    components: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+
+
+class ValidationSplit(Base):
+    """The frozen train / validation / test split of a validation run (SP 3.12).
+
+    One row per run mirroring the SP 3.4 ``EvaluationSplit``. The boundary
+    ordering ``train_end < validation_start <= validation_end < test_start``
+    is enforced at the domain level before persistence (SP 3.1); ``split_hash``
+    records the SP 3.3 stable hash of the frozen split configuration.
+    """
+
+    __tablename__ = "validation_splits"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["validation_run_id"],
+            ["validation_runs.run_id"],
+            name="fk_validation_splits_run",
+        ),
+    )
+
+    validation_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    split_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    train_start: Mapped[date] = mapped_column(Date, nullable=False)
+    train_end: Mapped[date] = mapped_column(Date, nullable=False)
+    validation_start: Mapped[date] = mapped_column(Date, nullable=False)
+    validation_end: Mapped[date] = mapped_column(Date, nullable=False)
+    test_start: Mapped[date] = mapped_column(Date, nullable=False)
+    test_end: Mapped[date] = mapped_column(Date, nullable=False)
+
+
+class ValidationTrial(Base):
+    """A recorded parameter trial of a validation run (MVP 3 / SP 3.12).
+
+    One row per ``(validation_run_id, trial_id)`` mirroring the SP 3.18
+    ``ParameterTrial``: parameters (JSONB list), the train / validation
+    boundaries it used, the dataset fingerprint, seed, code version and the
+    resulting validation metric or failure reason. ``backtest_run_id`` links
+    the trial to the MVP 2 backtest run that produced its metric (SP 3.12
+    acceptance), or is NULL for a failed trial that never ran.
+    """
+
+    __tablename__ = "validation_trials"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["validation_run_id"],
+            ["validation_runs.run_id"],
+            name="fk_validation_trials_run",
+        ),
+        ForeignKeyConstraint(
+            ["backtest_run_id"],
+            ["backtest_runs.run_id"],
+            name="fk_validation_trials_backtest_run",
+        ),
+        UniqueConstraint("validation_run_id", "trial_id", name="uq_validation_trials_trial"),
+        Index("ix_validation_trials_run", "validation_run_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    validation_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    trial_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    parameters: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+    dataset_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    train_start: Mapped[date] = mapped_column(Date, nullable=False)
+    train_end: Mapped[date] = mapped_column(Date, nullable=False)
+    validation_start: Mapped[date] = mapped_column(Date, nullable=False)
+    validation_end: Mapped[date] = mapped_column(Date, nullable=False)
+    seed: Mapped[int] = mapped_column(Integer, nullable=False)
+    code_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    metric: Mapped[float | None] = mapped_column(Numeric(20, 6), nullable=True)
+    failed_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    backtest_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class ValidationFold(Base):
+    """A rolling out-of-sample fold of a validation run (MVP 3 / SP 3.12).
+
+    One row per ``(validation_run_id, fold_index)`` mirroring the SP 3.31
+    ``WalkForwardFold``: its train / validation / test intervals, retraining
+    anchor, dataset fingerprint and the MVP 2 ``backtest_run_id`` that holds
+    the fold's OOS execution (SP 3.35). Every fold is traceable back to the
+    data manifest, parameter selection and MVP 2 run (SP 3.36).
+    """
+
+    __tablename__ = "validation_folds"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["validation_run_id"],
+            ["validation_runs.run_id"],
+            name="fk_validation_folds_run",
+        ),
+        ForeignKeyConstraint(
+            ["backtest_run_id"],
+            ["backtest_runs.run_id"],
+            name="fk_validation_folds_backtest_run",
+        ),
+        UniqueConstraint("validation_run_id", "fold_index", name="uq_validation_folds_index"),
+        Index("ix_validation_folds_run", "validation_run_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    validation_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    fold_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    train_start: Mapped[date] = mapped_column(Date, nullable=False)
+    train_end: Mapped[date] = mapped_column(Date, nullable=False)
+    validation_start: Mapped[date] = mapped_column(Date, nullable=False)
+    validation_end: Mapped[date] = mapped_column(Date, nullable=False)
+    test_start: Mapped[date] = mapped_column(Date, nullable=False)
+    test_end: Mapped[date] = mapped_column(Date, nullable=False)
+    retrain_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    dataset_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    backtest_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class ValidationStressResult(Base):
+    """A pre-registered stress scenario result of a validation run (SP 3.12).
+
+    One row per ``(validation_run_id, scenario_name)`` recording the scenario
+    assumptions (JSONB), applicable markets, the run fingerprint and the
+    baseline / stressed MVP 2 backtest run ids so every stress scenario is
+    auditable and replayable (SP 3.59). ``delta`` holds the quantified impact
+    versus the baseline.
+    """
+
+    __tablename__ = "validation_stress_results"
+    __table_args__ = (
+        CheckConstraint(
+            "scenario_type IN ("
+            "'cost', 'liquidity', 'fx', 'calendar', "
+            "'corporate_action', 'stock_pool', 'parameter_neighborhood'"
+            ")",
+            name="ck_validation_stress_results_type",
+        ),
+        ForeignKeyConstraint(
+            ["validation_run_id"],
+            ["validation_runs.run_id"],
+            name="fk_validation_stress_results_run",
+        ),
+        ForeignKeyConstraint(
+            ["baseline_backtest_run_id"],
+            ["backtest_runs.run_id"],
+            name="fk_validation_stress_baseline_run",
+        ),
+        ForeignKeyConstraint(
+            ["stressed_backtest_run_id"],
+            ["backtest_runs.run_id"],
+            name="fk_validation_stress_stressed_run",
+        ),
+        UniqueConstraint(
+            "validation_run_id",
+            "scenario_name",
+            name="uq_validation_stress_results_scenario",
+        ),
+        Index("ix_validation_stress_results_run", "validation_run_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    validation_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    scenario_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    scenario_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    assumptions: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    applicable_markets: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    run_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    baseline_backtest_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    stressed_backtest_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    delta: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ValidationConclusion(Base):
+    """The recorded out-of-sample conclusion of a validation run (SP 3.12).
+
+    One row per run keyed by ``validation_run_id``: the pre-registered
+    ``QUALIFIED`` / ``NOT_QUALIFIED`` / ``INCONCLUSIVE`` outcome (SP 3.58),
+    the conclusion-rule version, the evidence chain (JSONB) and unresolved
+    limitations (JSONB list), plus the timestamp it was recorded. Conclusions
+    never carry a return promise (SP 3.87).
+    """
+
+    __tablename__ = "validation_conclusions"
+    __table_args__ = (
+        CheckConstraint(
+            "conclusion IN ('QUALIFIED', 'NOT_QUALIFIED', 'INCONCLUSIVE')",
+            name="ck_validation_conclusions_conclusion",
+        ),
+        ForeignKeyConstraint(
+            ["validation_run_id"],
+            ["validation_runs.run_id"],
+            name="fk_validation_conclusions_run",
+        ),
+    )
+
+    validation_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    conclusion: Mapped[str] = mapped_column(String(16), nullable=False)
+    rule_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    evidence: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    limitations: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ValidationWarning(Base):
+    """An audit warning recorded for a validation run (MVP 3 / SP 3.12).
+
+    Append-only rows tagged with ``validation_run_id``: a warning code, the
+    severity (``warning`` / ``error``), a human-readable message, optional
+    JSON context and the timestamp. Warnings surface coverage gaps, stress
+    losses and drift so a conclusion can never silently ignore them.
+    """
+
+    __tablename__ = "validation_warnings"
+    __table_args__ = (
+        CheckConstraint(
+            "severity IN ('warning', 'error')",
+            name="ck_validation_warnings_severity",
+        ),
+        ForeignKeyConstraint(
+            ["validation_run_id"],
+            ["validation_runs.run_id"],
+            name="fk_validation_warnings_run",
+        ),
+        Index("ix_validation_warnings_run", "validation_run_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    validation_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    warning_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    context: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 v_quality_summary_hk = Table(
     "v_quality_summary_hk",
     Base.metadata,

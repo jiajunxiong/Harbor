@@ -132,7 +132,7 @@ class MigrationChainTests(unittest.TestCase):
         bases = script.get_bases()
         self.assertEqual(len(heads), 1)
         self.assertEqual(len(bases), 1)
-        self.assertEqual(heads[0], "0022_add_backtest_runs_resume_of")
+        self.assertEqual(heads[0], "0023_create_validation_tables")
         self.assertEqual(bases[0], "0001_create_securities")
 
         versions = list(script.walk_revisions())
@@ -279,6 +279,99 @@ class BacktestAndFxSchemaDeclarationTests(unittest.TestCase):
         self.assertIn("resume_of", self._source("0022_add_backtest_runs_resume_of"))
 
 
+class ValidationSchemaDeclarationTests(unittest.TestCase):
+    """Verify the validation tables migration declares its constraints.
+
+    These checks are database-free and run everywhere; the live equivalent is
+    :class:`ValidationMigrationRunTests` (SP 3.75).
+    """
+
+    def _source(self) -> str:
+        return (_VERSIONS_DIR / "0023_create_validation_tables.py").read_text(encoding="utf-8")
+
+    def test_validation_runs_declares_status_check_and_pk(self) -> None:
+        source = self._source()
+        self.assertIn("ck_validation_runs_status", source)
+        self.assertIn("pk_validation_runs", source)
+        for status in (
+            "DRAFT",
+            "DATA_FROZEN",
+            "TUNING",
+            "TEST_LOCKED",
+            "EVALUATED",
+            "NOT_QUALIFIED",
+            "FAILED",
+        ):
+            with self.subTest(status=status):
+                self.assertIn(status, source)
+
+    def test_manifest_and_split_declare_run_fks_and_pks(self) -> None:
+        source = self._source()
+        for name in (
+            "fk_validation_manifests_run",
+            "pk_validation_manifests",
+            "fk_validation_splits_run",
+            "pk_validation_splits",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(name, source)
+
+    def test_trials_and_folds_declare_constraints_and_indexes(self) -> None:
+        source = self._source()
+        for name in (
+            "fk_validation_trials_run",
+            "fk_validation_trials_backtest_run",
+            "uq_validation_trials_trial",
+            "ix_validation_trials_run",
+            "fk_validation_folds_run",
+            "fk_validation_folds_backtest_run",
+            "uq_validation_folds_index",
+            "ix_validation_folds_run",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(name, source)
+
+    def test_stress_results_declare_constraints_and_indexes(self) -> None:
+        source = self._source()
+        for name in (
+            "ck_validation_stress_results_type",
+            "fk_validation_stress_results_run",
+            "fk_validation_stress_baseline_run",
+            "fk_validation_stress_stressed_run",
+            "uq_validation_stress_results_scenario",
+            "ix_validation_stress_results_run",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(name, source)
+        for scenario_type in (
+            "cost",
+            "liquidity",
+            "fx",
+            "calendar",
+            "corporate_action",
+            "stock_pool",
+            "parameter_neighborhood",
+        ):
+            with self.subTest(scenario_type=scenario_type):
+                self.assertIn(scenario_type, source)
+
+    def test_conclusion_and_warnings_declare_constraints(self) -> None:
+        source = self._source()
+        for name in (
+            "ck_validation_conclusions_conclusion",
+            "fk_validation_conclusions_run",
+            "pk_validation_conclusions",
+            "ck_validation_warnings_severity",
+            "fk_validation_warnings_run",
+            "ix_validation_warnings_run",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(name, source)
+        for conclusion in ("QUALIFIED", "NOT_QUALIFIED", "INCONCLUSIVE"):
+            with self.subTest(conclusion=conclusion):
+                self.assertIn(conclusion, source)
+
+
 @unittest.skipUnless(_TEST_DATABASE_URL, "HARBOR_TEST_DATABASE_URL is not set")
 class BacktestAndFxMigrationRunTests(unittest.TestCase):
     """Upgrade a fresh DB and verify backtest + FX constraints and indexes (SP 2.77)."""
@@ -389,6 +482,121 @@ class BacktestAndFxMigrationRunTests(unittest.TestCase):
             "ix_backtest_fills_run_date",
             "ix_backtest_rejected_trades_run_market",
             "ix_backtest_factor_snapshots_run_date",
+        ):
+            with self.subTest(name=expected):
+                self.assertIn(expected, names)
+
+
+@unittest.skipUnless(_TEST_DATABASE_URL, "HARBOR_TEST_DATABASE_URL is not set")
+class ValidationMigrationRunTests(unittest.TestCase):
+    """Upgrade a fresh DB and verify the validation tables (SP 3.75)."""
+
+    _TABLES = (
+        "validation_runs",
+        "validation_manifests",
+        "validation_splits",
+        "validation_trials",
+        "validation_folds",
+        "validation_stress_results",
+        "validation_conclusions",
+        "validation_warnings",
+    )
+
+    def setUp(self) -> None:
+        self.engine = _fresh_engine()
+        _upgrade_to_head(self.engine)
+        self.inspector = inspect(self.engine)
+
+    def test_all_validation_tables_exist(self) -> None:
+        created = set(self.inspector.get_table_names())
+        for table in self._TABLES:
+            with self.subTest(table=table):
+                self.assertIn(table, created)
+
+    def test_primary_keys_are_created(self) -> None:
+        self.assertEqual(
+            self.inspector.get_pk_constraint("validation_runs")["constrained_columns"],
+            ["run_id"],
+        )
+        for table in (
+            "validation_manifests",
+            "validation_splits",
+            "validation_conclusions",
+        ):
+            with self.subTest(table=table):
+                self.assertEqual(
+                    self.inspector.get_pk_constraint(table)["constrained_columns"],
+                    ["validation_run_id"],
+                )
+        for table in (
+            "validation_trials",
+            "validation_folds",
+            "validation_stress_results",
+            "validation_warnings",
+        ):
+            with self.subTest(table=table):
+                self.assertEqual(
+                    self.inspector.get_pk_constraint(table)["constrained_columns"], ["id"]
+                )
+
+    def test_foreign_keys_are_created(self) -> None:
+        names = {
+            fk["name"] for table in self._TABLES for fk in self.inspector.get_foreign_keys(table)
+        }
+        for expected in (
+            "fk_validation_manifests_run",
+            "fk_validation_splits_run",
+            "fk_validation_trials_run",
+            "fk_validation_trials_backtest_run",
+            "fk_validation_folds_run",
+            "fk_validation_folds_backtest_run",
+            "fk_validation_stress_results_run",
+            "fk_validation_stress_baseline_run",
+            "fk_validation_stress_stressed_run",
+            "fk_validation_conclusions_run",
+            "fk_validation_warnings_run",
+        ):
+            with self.subTest(name=expected):
+                self.assertIn(expected, names)
+
+    def test_check_constraints_are_created(self) -> None:
+        names = {
+            check["name"]
+            for table in self._TABLES
+            for check in self.inspector.get_check_constraints(table)
+        }
+        for expected in (
+            "ck_validation_runs_status",
+            "ck_validation_stress_results_type",
+            "ck_validation_conclusions_conclusion",
+            "ck_validation_warnings_severity",
+        ):
+            with self.subTest(name=expected):
+                self.assertIn(expected, names)
+
+    def test_unique_constraints_are_created(self) -> None:
+        names = {
+            unique["name"]
+            for table in self._TABLES
+            for unique in self.inspector.get_unique_constraints(table)
+        }
+        for expected in (
+            "uq_validation_trials_trial",
+            "uq_validation_folds_index",
+            "uq_validation_stress_results_scenario",
+        ):
+            with self.subTest(name=expected):
+                self.assertIn(expected, names)
+
+    def test_explicit_indexes_are_created(self) -> None:
+        names = {
+            index["name"] for table in self._TABLES for index in self.inspector.get_indexes(table)
+        }
+        for expected in (
+            "ix_validation_trials_run",
+            "ix_validation_folds_run",
+            "ix_validation_stress_results_run",
+            "ix_validation_warnings_run",
         ):
             with self.subTest(name=expected):
                 self.assertIn(expected, names)

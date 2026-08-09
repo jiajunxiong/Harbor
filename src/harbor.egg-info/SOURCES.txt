@@ -107,6 +107,7 @@ src/harbor/storage/backtest_repositories.py
 src/harbor/storage/fx_repository.py
 src/harbor/storage/models.py
 src/harbor/storage/repositories.py
+src/harbor/storage/validation_repositories.py
 tests/test_action_mapping.py
 tests/test_adjustment_events.py
 tests/test_adjustments.py
@@ -234,6 +235,7 @@ tests/test_validation.py
 tests/test_validation_config.py
 tests/test_validation_config_loader.py
 tests/test_validation_domain.py
+tests/test_validation_repositories.py
 tests/test_validation_split.py
 tests/test_valuation.py
 tests/test_volume_limit.py
