@@ -68,6 +68,7 @@ src/harbor/core/ledger_reconciliation.py
 src/harbor/core/market_registry.py
 src/harbor/core/market_selector.py
 src/harbor/core/multiple_trial_penalty.py
+src/harbor/core/oos_chain.py
 src/harbor/core/order_drafts.py
 src/harbor/core/parameter_constraints.py
 src/harbor/core/parameter_selection_explanation.py
@@ -221,6 +222,7 @@ tests/test_multiple_trial_penalty.py
 tests/test_mvp2_acceptance_record.py
 tests/test_mvp_status_update.py
 tests/test_ohlc_checks.py
+tests/test_oos_chain.py
 tests/test_order_drafts.py
 tests/test_parameter_budget.py
 tests/test_parameter_constraints.py
