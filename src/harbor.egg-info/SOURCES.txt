@@ -32,6 +32,7 @@ src/harbor/core/consistency_check.py
 src/harbor/core/corporate_actions.py
 src/harbor/core/cost_hk.py
 src/harbor/core/cost_us.py
+src/harbor/core/coverage_scoring.py
 src/harbor/core/cross_market_merge.py
 src/harbor/core/csv_export.py
 src/harbor/core/data_readiness.py
@@ -138,6 +139,7 @@ tests/test_cost_calendar_suite.py
 tests/test_cost_hk.py
 tests/test_cost_us.py
 tests/test_coverage_checks.py
+tests/test_coverage_scoring.py
 tests/test_cross_market_merge.py
 tests/test_csv_export.py
 tests/test_data_isolation_review.py
