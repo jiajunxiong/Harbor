@@ -73,6 +73,7 @@ src/harbor/core/parameter_selection_explanation.py
 src/harbor/core/parameter_space.py
 src/harbor/core/performance_metrics.py
 src/harbor/core/point_in_time.py
+src/harbor/core/pre_registered_baseline.py
 src/harbor/core/quality_checks.py
 src/harbor/core/quality_correlation.py
 src/harbor/core/quality_policy.py
@@ -222,6 +223,7 @@ tests/test_parameter_space.py
 tests/test_performance_baseline.py
 tests/test_performance_metrics.py
 tests/test_point_in_time.py
+tests/test_pre_registered_baseline.py
 tests/test_provider_factory.py
 tests/test_provider_switch.py
 tests/test_quality_checks.py
