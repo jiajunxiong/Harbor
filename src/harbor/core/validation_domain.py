@@ -1,12 +1,13 @@
 """Immutable validation-domain types (MVP 3 / SP 3.1).
 
 These value types are the shared vocabulary for out-of-sample validation: a
-frozen dataset manifest (SP 3.6), the train / validation / test split
-(SP 3.4), a parameter trial (SP 3.18), a walk-forward fold (SP 3.31) and the
-two enums that drive the validation state machine (SP 3.13) and the OOS
-conclusion rules (SP 3.58). Every type is immutable — a frozen dataclass or
-an enum — so recorded validation state can be replayed deterministically and
-no later edit can silently change a frozen boundary or a recorded trial.
+frozen dataset manifest with per-component query records (SP 3.6), the train
+/ validation / test split (SP 3.4), a parameter trial (SP 3.18), a
+walk-forward fold (SP 3.31) and the two enums that drive the validation state
+machine (SP 3.13) and the OOS conclusion rules (SP 3.58). Every type is
+immutable — a frozen dataclass or an enum — so recorded validation state can
+be replayed deterministically and no later edit can silently change a frozen
+boundary or a recorded trial.
 
 The split and fold types enforce a strict, non-overlapping time ordering
 (SP 3.4): training ends strictly before validation starts, and validation
@@ -81,6 +82,64 @@ def _require_ordered_ranges(*ranges: tuple[date, date]) -> None:
         previous_end = end
 
 
+class ManifestComponent(StrEnum):
+    """The data kinds recorded in a frozen dataset manifest (SP 3.6).
+
+    Prices, dividends, fundamentals, corporate actions, the historical stock
+    pool, FX rates, the trading calendar, the benchmark and quality issues
+    each carry their own query boundary, source and version so the frozen
+    dataset is fully reproducible (SP 3.6 / 3.7).
+    """
+
+    PRICES = "prices"
+    DIVIDENDS = "dividends"
+    FUNDAMENTALS = "fundamentals"
+    CORPORATE_ACTIONS = "corporate_actions"
+    STOCK_POOL = "stock_pool"
+    FX = "fx"
+    CALENDAR = "calendar"
+    BENCHMARK = "benchmark"
+    QUALITY_ISSUES = "quality_issues"
+
+
+@dataclass(frozen=True)
+class DataComponentManifest:
+    """Query boundary, source and version of one data component (SP 3.6).
+
+    ``start``/``end`` are the component's query boundaries: both must be set
+    (a bounded query) or neither (unbounded); a reversed range is rejected.
+    """
+
+    component: ManifestComponent
+    source: str
+    version: str
+    start: date | None = None
+    end: date | None = None
+
+    def __post_init__(self) -> None:
+        if not self.source:
+            raise ValueError("Component source must be non-empty.")
+        if not self.version:
+            raise ValueError("Component version must be non-empty.")
+        if (self.start is None) != (self.end is None):
+            raise ValueError(
+                f"Component {self.component.value} must set both or neither of start and end."
+            )
+        if self.start is not None and self.end is not None and self.start > self.end:
+            raise SplitBoundaryError(
+                f"component {self.component.value} range is empty or reversed "
+                f"({self.start.isoformat()} > {self.end.isoformat()})."
+            )
+
+    def readable(self) -> str:
+        """Render the component record as one line."""
+        if self.start is None or self.end is None:
+            bounds = "unbounded"
+        else:
+            bounds = f"{self.start.isoformat()}..{self.end.isoformat()}"
+        return f"{self.component.value} [{self.source} v{self.version}] {bounds}"
+
+
 @dataclass(frozen=True)
 class DatasetManifest:
     """The frozen data version used by a validation run (SP 3.6 / 3.7).
@@ -102,6 +161,7 @@ class DatasetManifest:
     fx_source: str
     fingerprint: str
     random_seed: int | None = None
+    components: tuple[DataComponentManifest, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.markets:
@@ -120,6 +180,23 @@ class DatasetManifest:
             raise SplitBoundaryError("manifest end_date must be on or after start_date.")
         if self.data_cutoff < self.start_date or self.data_cutoff > self.end_date:
             raise SplitBoundaryError("manifest data_cutoff must lie within the manifest range.")
+        self._validate_components()
+
+    def _validate_components(self) -> None:
+        """Reject duplicate or out-of-range component records (SP 3.6)."""
+        seen: set[ManifestComponent] = set()
+        for entry in self.components:
+            if entry.component in seen:
+                raise ValueError(f"Dataset manifest duplicates component {entry.component.value}.")
+            seen.add(entry.component)
+            if entry.start is not None and entry.end is not None:
+                if entry.start < self.start_date or entry.end > self.end_date:
+                    raise SplitBoundaryError(
+                        f"component {entry.component.value} range "
+                        f"{entry.start.isoformat()}..{entry.end.isoformat()} must lie "
+                        f"within the manifest range "
+                        f"{self.start_date.isoformat()}..{self.end_date.isoformat()}."
+                    )
 
     def readable(self) -> str:
         """Render the manifest as a single-line data-version summary."""
@@ -129,7 +206,8 @@ class DatasetManifest:
             f"{self.start_date.isoformat()}..{self.end_date.isoformat()} "
             f"cutoff {self.data_cutoff.isoformat()} config {self.config_hash} "
             f"code {self.code_version} calendar {self.calendar_version} "
-            f"fx {self.fx_source} seed {self.random_seed}"
+            f"fx {self.fx_source} seed {self.random_seed} "
+            f"components {len(self.components)}"
         )
 
 
