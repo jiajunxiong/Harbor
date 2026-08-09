@@ -72,6 +72,7 @@ src/harbor/core/oos_chain.py
 src/harbor/core/oos_concat.py
 src/harbor/core/oos_dispersion.py
 src/harbor/core/oos_performance.py
+src/harbor/core/oos_reconcile.py
 src/harbor/core/order_drafts.py
 src/harbor/core/parameter_constraints.py
 src/harbor/core/parameter_selection_explanation.py
@@ -229,6 +230,7 @@ tests/test_oos_chain.py
 tests/test_oos_concat.py
 tests/test_oos_dispersion.py
 tests/test_oos_performance.py
+tests/test_oos_reconcile.py
 tests/test_order_drafts.py
 tests/test_parameter_budget.py
 tests/test_parameter_constraints.py
