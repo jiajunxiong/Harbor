@@ -24,6 +24,16 @@ class YFinanceProviderTests(unittest.TestCase):
         self.assertEqual(provider._normalize_symbol("0700"), "0700.HK")
         self.assertEqual(provider._normalize_symbol("0700.HK"), "0700.HK")
 
+    def test_hk_provider_normalizes_official_five_digit_codes(self) -> None:
+        """The HKEX five-digit spelling (00001) resolves to the four-digit
+        yfinance form (0001.HK), with and without the suffix (SP 2.90 fix)."""
+        provider = HKYFinanceProvider()
+
+        self.assertEqual(provider._normalize_symbol("00001"), "0001.HK")
+        self.assertEqual(provider._normalize_symbol("00001.HK"), "0001.HK")
+        self.assertEqual(provider._normalize_symbol("00700.HK"), "0700.HK")
+        self.assertEqual(provider._normalize_symbol("9988.HK"), "9988.HK")
+
     def test_hk_provider_serves_hk_market_only(self) -> None:
         capabilities = HKYFinanceProvider().capabilities()
 

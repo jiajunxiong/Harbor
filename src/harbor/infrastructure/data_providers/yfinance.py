@@ -311,8 +311,15 @@ class HKYFinanceProvider(YFinanceProvider):
         return ProviderCapabilities({MarketTarget.HK: _ALL_CAPABILITIES})
 
     def _normalize_symbol(self, symbol: str) -> str:
-        """Return a 4-digit HK code with the ``.HK`` suffix."""
-        return f"{symbol.removesuffix('.HK')}.HK"
+        """Return a 4-digit HK code with the ``.HK`` suffix.
+
+        Hong Kong codes are officially written with five digits on the HKEX
+        (``00001``) but yfinance resolves them with four (``0001.HK``); a code
+        is normalized to the four-digit form so both spellings fetch the same
+        series.
+        """
+        digits = symbol.removesuffix(".HK").strip()
+        return f"{int(digits):04d}.HK"
 
 
 class USYFinanceProvider(YFinanceProvider):

@@ -166,6 +166,41 @@ class DefaultHolidayTests(unittest.TestCase):
             with self.subTest(day=day):
                 self.assertTrue(calendar.is_trading_day(Market.US, day))
 
+    def test_hk_default_covers_example_range_new_years_days(self) -> None:
+        """Every Jan 1 in the shipped example range is a HKEX non-trading day,
+        and the deferred quarter-start rebalance lands on the first real trading
+        day (SP 2.90 parity regression): a real-data HK backtest over 2019-2024
+        must not rebalance onto a HKEX holiday with no price (SP 2.36)."""
+        calendar = MarketTradingCalendar()
+        expected_first_rebalance = {
+            2019: date(2019, 1, 2),
+            2020: date(2020, 1, 2),
+            2021: date(2021, 1, 4),
+            2022: date(2022, 1, 3),
+            2023: date(2023, 1, 3),
+            2024: date(2024, 1, 2),
+        }
+        for year, expected in expected_first_rebalance.items():
+            with self.subTest(year=year):
+                self.assertFalse(calendar.is_trading_day(Market.HK, date(year, 1, 1)))
+                self.assertEqual(calendar.next_trading_day(Market.HK, date(year, 1, 1)), expected)
+
+    def test_hk_default_treats_quarter_starts_as_trading(self) -> None:
+        """Non-holiday HK quarter starts are trading days in the example range.
+
+        Jul 1 (HKSAR Day) and Oct 1 (National Day) are holidays every year, so
+        April quarter starts are the representative non-holiday anchors.
+        """
+        calendar = MarketTradingCalendar()
+        for day in (
+            date(2019, 4, 1),
+            date(2020, 4, 1),
+            date(2021, 4, 1),
+            date(2022, 4, 1),
+        ):
+            with self.subTest(day=day):
+                self.assertTrue(calendar.is_trading_day(Market.HK, day))
+
 
 if __name__ == "__main__":
     unittest.main()
