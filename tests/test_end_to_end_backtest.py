@@ -452,5 +452,135 @@ class RunLoggingRunnerTests(unittest.TestCase):
         self.assertEqual(handler.records, [])
 
 
+class FillCashManagementTests(unittest.TestCase):
+    """Fill-stage cash-management regressions (SP 2.42, post-MVP-2).
+
+    Two behaviors added after the real-data US backtest failed:
+
+    - sells are realized before buys, so a rebalance that is affordable in
+      aggregate (buys <= cash + sell proceeds) completes instead of a
+      symbol-ordered buy overdrawing cash mid-fill;
+    - a buy that remains unfundable after sells is refused with a warning and
+      the run completes, instead of raising ``InsufficientCashError`` and
+      failing the whole run.
+
+    Both use a fixed HK Mock universe (weekday calendar, ``min_cash_pct`` 0.02)
+    and assert on the day-by-day ``securities_value`` so the discriminator is
+    the funding outcome, not the run status alone.
+    """
+
+    _DAYS3 = (date(2024, 1, 2), date(2024, 1, 3), date(2024, 1, 4))
+
+    @staticmethod
+    def _quote(day: date, close: float) -> DailyQuote:
+        return DailyQuote(
+            market=Market.HK,
+            symbol="sym",
+            day=day,
+            open=close,
+            high=close,
+            low=close,
+            close=close,
+            volume=10_000_000,
+            adjusted_close=close,
+        )
+
+    def _config(self) -> BacktestConfig:
+        return BacktestConfig(
+            markets=(Market.HK,),
+            market_quotas=(MarketQuota(market=Market.HK, target_count=2, weight=1.0),),
+            start_date=self._DAYS3[0],
+            end_date=self._DAYS3[-1],
+            base_currency=Currency.HKD,
+            rebalance_frequency=RebalanceFrequency.QUARTERLY,
+            initial_capital=1_000_000.0,
+            risk=RiskConfig(max_position_pct=1.0, max_market_pct=1.0, min_cash_pct=0.02),
+        )
+
+    def _run(
+        self,
+        quotes: dict[tuple[Market, str], dict[date, DailyQuote]],
+        selections: dict[tuple[Market, date], tuple[str, ...]],
+    ) -> BacktestTrace:
+        return run_end_to_end_backtest(
+            run_id="fill-cash",
+            config=self._config(),
+            universe=MockUniverse(
+                calendar=MarketTradingCalendar({Market.HK: frozenset()}),
+                quotes=quotes,
+                selections=selections,
+            ),
+            weighting=TargetWeightConfig(
+                method=WeightingMethod.EQUAL, cash_weight=0.0, decimal_places=4
+            ),
+        )
+
+    def test_sell_fills_before_buy_fund_the_rotation(self) -> None:
+        """The loser (0001.HK, sorts first) is topped up with the winner's sale.
+
+        Day 1 buys both at equal weight (~980k equity). On day 2 0001.HK drops
+        to 50 and 0002.HK doubles to 100, so the rebalance buys the loser and
+        sells the winner; the buy sorts before the sell in symbol order. Selling
+        first realizes the cash that funds the buy, so 0001.HK reaches its full
+        ~978k target instead of being refused at ~245k.
+        """
+        d0, d1, d2 = self._DAYS3
+        quotes: dict[tuple[Market, str], dict[date, DailyQuote]] = {
+            (Market.HK, "0001.HK"): {
+                d0: self._quote(d0, 100.0),
+                d1: self._quote(d1, 50.0),
+                d2: self._quote(d2, 50.0),
+            },
+            (Market.HK, "0002.HK"): {
+                d0: self._quote(d0, 50.0),
+                d1: self._quote(d1, 100.0),
+                d2: self._quote(d2, 100.0),
+            },
+        }
+        selections = {
+            (Market.HK, d0): ("0001.HK", "0002.HK"),
+            (Market.HK, d1): ("0001.HK", "0002.HK"),
+        }
+        trace = self._run(quotes, selections)
+        self.assertTrue(trace.succeeded)
+        self.assertEqual(trace.reconcile_all(), ())
+        day2 = next(result for result in trace.results if result.as_of == d1)
+        self.assertGreater(day2.valuation.net_value.securities_value, 900_000.0)
+
+    def test_unfundable_buy_is_refused_and_run_completes(self) -> None:
+        """A rebalance whose top-ups genuinely exceed cash + sells completes.
+
+        On day 2 0001.HK gaps down to 25, so topping it back to target needs
+        ~244k of new cash with no sells available (0002.HK is already at
+        target). The unfundable top-up is refused with a warning and the run
+        completes; before the fix this raised ``InsufficientCashError`` and the
+        run FAILED.
+        """
+        d0, d1, d2 = self._DAYS3
+        quotes: dict[tuple[Market, str], dict[date, DailyQuote]] = {
+            (Market.HK, "0001.HK"): {
+                d0: self._quote(d0, 50.0),
+                d1: self._quote(d1, 25.0),
+                d2: self._quote(d2, 25.0),
+            },
+            (Market.HK, "0002.HK"): {
+                d0: self._quote(d0, 50.0),
+                d1: self._quote(d1, 50.0),
+                d2: self._quote(d2, 50.0),
+            },
+        }
+        selections = {
+            (Market.HK, d0): ("0001.HK", "0002.HK"),
+            (Market.HK, d1): ("0001.HK", "0002.HK"),
+        }
+        trace = self._run(quotes, selections)
+        self.assertTrue(trace.succeeded)
+        self.assertEqual(trace.reconcile_all(), ())
+        day2 = next(result for result in trace.results if result.as_of == d1)
+        # The 0001.HK top-up was refused: it stays around 9,800 x 25 = 245k
+        # plus 0002.HK at target, well below the ~978k fully-funded level.
+        self.assertLess(day2.valuation.net_value.securities_value, 800_000.0)
+
+
 if __name__ == "__main__":
     unittest.main()

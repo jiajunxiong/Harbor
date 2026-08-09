@@ -276,10 +276,19 @@ class _RunContext:
         return tuple(warnings)
 
     def fill(self, day: date) -> Sequence[str]:
-        """Fill stage: execute the orders scheduled for today (SP 2.39–2.41)."""
+        """Fill stage: execute the orders scheduled for today (SP 2.39–2.41).
+
+        Sell orders are realized before buy orders so that a day which is
+        affordable in aggregate (buys <= cash + sell proceeds, SP 2.36) never
+        overdraws cash mid-fill: the cash from sells funds the day's buys
+        instead of a symbol-ordered buy hitting a temporary negative balance
+        (SP 2.42). The order is stable within each side, so the run stays
+        deterministic and replayable.
+        """
         warnings: list[str] = []
         due = [entry for entry in self._pending if entry[1] <= day]
         self._pending = [entry for entry in self._pending if entry[1] > day]
+        due.sort(key=lambda entry: 0 if entry[0].side is OrderSide.SELL else 1)
         for order, _fill_day in due:
             quote = self._quote(order.market, order.symbol, day)
             refused = refuse_order(order=order, day=day, quote=quote)
@@ -323,14 +332,24 @@ class _RunContext:
         converted into the fill currency at the day's FX rate so the buy can
         pay in its own quote currency (SP 2.42). No implicit FX: a missing or
         non-positive rate refuses the fill rather than assuming 1:1.
+
+        A base-currency buy must be covered by the current base cash. Sells
+        are realized before buys in the fill stage, so a base-currency buy that
+        is still unfundable reflects a genuine rebalance cash shortfall
+        (SP 2.36); it is refused with a warning rather than raising
+        :class:`~harbor.core.ledger.InsufficientCashError` and failing the run.
         """
         base = self.config.base_currency
+        cost = fill.quantity * fill.price + fill.fee
         if fill.currency is base:
-            return True
+            if fill.side is OrderSide.SELL:
+                return True
+            # A tiny buffer avoids float-rounding leaving the balance slightly
+            # short of the fill's notional + fee (SP 2.42).
+            return self.ledger.balance(base) >= cost * (1.0 + 1e-9)
         rate = self._fx_rate(fill.currency, base, fill.trade_date)
         if rate is None or rate <= 0:
             return False
-        cost = fill.quantity * fill.price + fill.fee
         # A tiny buffer avoids float-rounding leaving the converted balance
         # slightly short of the fill's notional + fee (SP 2.42).
         base_needed = cost * rate * (1.0 + 1e-9)

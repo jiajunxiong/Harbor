@@ -6,11 +6,15 @@ holidays are non-trading days, so the calendar is no longer a Monday-to-Friday
 approximation.
 
 Holiday sets are injectable for deterministic tests. :data:`DEFAULT_HOLIDAYS`
-is an illustrative default covering 2026 only; a production research run must
-supply an authoritative exchange calendar covering the full backtest range
-(see the documented limitations in SP 2.73 / 2.74). Rebalance days are the
-first trading day on or after each quarter start (SP 2.33 refines this rule
-with configuration).
+covers the United States authoritatively for 2019-2024 (the range of the
+shipped example strategy configs, SP 2.72) plus the illustrative 2026 set; the
+Hong Kong set is an illustrative default covering 2026 only. A production
+research run over a different range or market must supply an authoritative
+exchange calendar covering the full backtest range (see the documented
+limitations in SP 2.73 / 2.74) — otherwise a rebalance anchor can land on a
+market holiday with no price data and the run fails (SP 2.36). Rebalance days
+are the first trading day on or after each quarter start (SP 2.33 refines this
+rule with configuration).
 """
 
 from collections.abc import Iterator, Mapping, Sequence
@@ -40,6 +44,77 @@ _HK_HOLIDAYS_2026: frozenset[date] = frozenset(
     }
 )
 
+#: Authoritative United States (NYSE) holidays, 2019-2024 — the range of the
+#: shipped example strategy configs (SP 2.72). Weekday closures only; weekend
+#: holidays are already non-trading. Early closes (e.g. the day before
+#: Thanksgiving) are still trading days and are intentionally excluded.
+_US_HOLIDAYS_2019_2024: frozenset[date] = frozenset(
+    {
+        # 2019
+        date(2019, 1, 1),  # New Year's Day
+        date(2019, 1, 21),  # Martin Luther King Jr. Day
+        date(2019, 2, 18),  # Presidents' Day
+        date(2019, 4, 19),  # Good Friday
+        date(2019, 5, 27),  # Memorial Day
+        date(2019, 7, 4),  # Independence Day
+        date(2019, 9, 2),  # Labor Day
+        date(2019, 11, 28),  # Thanksgiving
+        date(2019, 12, 25),  # Christmas
+        # 2020
+        date(2020, 1, 1),
+        date(2020, 1, 20),
+        date(2020, 2, 17),
+        date(2020, 4, 10),  # Good Friday
+        date(2020, 5, 25),
+        date(2020, 7, 3),  # Independence Day (observed, Jul 4 Sat)
+        date(2020, 9, 7),
+        date(2020, 11, 26),
+        date(2020, 12, 25),
+        # 2021
+        date(2021, 1, 1),
+        date(2021, 1, 18),
+        date(2021, 2, 15),
+        date(2021, 4, 2),  # Good Friday
+        date(2021, 5, 31),
+        date(2021, 7, 5),  # Independence Day (observed, Jul 4 Sun)
+        date(2021, 9, 6),
+        date(2021, 11, 25),
+        date(2021, 12, 24),  # Christmas (observed, Dec 25 Sat)
+        # 2022
+        date(2022, 1, 17),
+        date(2022, 2, 21),
+        date(2022, 4, 15),  # Good Friday
+        date(2022, 5, 30),
+        date(2022, 6, 20),  # Juneteenth
+        date(2022, 7, 4),
+        date(2022, 9, 5),
+        date(2022, 11, 24),
+        date(2022, 12, 26),  # Christmas (observed, Dec 25 Sun)
+        # 2023
+        date(2023, 1, 2),  # New Year's Day (observed, Jan 1 Sun)
+        date(2023, 1, 16),
+        date(2023, 2, 20),
+        date(2023, 4, 7),  # Good Friday
+        date(2023, 5, 29),
+        date(2023, 6, 19),
+        date(2023, 7, 4),
+        date(2023, 9, 4),
+        date(2023, 11, 23),
+        date(2023, 12, 25),
+        # 2024
+        date(2024, 1, 1),
+        date(2024, 1, 15),
+        date(2024, 2, 19),
+        date(2024, 3, 29),  # Good Friday
+        date(2024, 5, 27),
+        date(2024, 6, 19),
+        date(2024, 7, 4),
+        date(2024, 9, 2),
+        date(2024, 11, 28),
+        date(2024, 12, 25),
+    }
+)
+
 #: Illustrative United States holidays (2026). Research default only.
 _US_HOLIDAYS_2026: frozenset[date] = frozenset(
     {
@@ -59,7 +134,7 @@ _US_HOLIDAYS_2026: frozenset[date] = frozenset(
 
 DEFAULT_HOLIDAYS: Mapping[Market, frozenset[date]] = {
     Market.HK: _HK_HOLIDAYS_2026,
-    Market.US: _US_HOLIDAYS_2026,
+    Market.US: _US_HOLIDAYS_2019_2024 | _US_HOLIDAYS_2026,
 }
 
 

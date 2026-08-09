@@ -134,6 +134,38 @@ class DefaultHolidayTests(unittest.TestCase):
         self.assertTrue(calendar.is_trading_day(Market.US, date(2026, 2, 9)))
         self.assertFalse(calendar.is_trading_day(Market.US, date(2026, 7, 3)))
 
+    def test_us_default_covers_example_range_new_years_days(self) -> None:
+        """Every Jan 1 in the shipped example range is a US non-trading day, and
+        the deferred quarter-start rebalance lands on the first real trading day
+        (SP 2.90 regression): a real-data backtest over 2019-2024 must not
+        rebalance onto a NYSE holiday with no price (SP 2.36)."""
+        calendar = MarketTradingCalendar()
+        expected_first_rebalance = {
+            2019: date(2019, 1, 2),
+            2020: date(2020, 1, 2),
+            2021: date(2021, 1, 4),
+            2022: date(2022, 1, 3),
+            2023: date(2023, 1, 3),
+            2024: date(2024, 1, 2),
+        }
+        for year, expected in expected_first_rebalance.items():
+            with self.subTest(year=year):
+                self.assertFalse(calendar.is_trading_day(Market.US, date(year, 1, 1)))
+                self.assertEqual(calendar.next_trading_day(Market.US, date(year, 1, 1)), expected)
+
+    def test_us_default_treats_quarter_starts_as_trading(self) -> None:
+        """Non-holiday US quarter starts are trading days in the example range."""
+        calendar = MarketTradingCalendar()
+        for day in (
+            date(2019, 4, 1),
+            date(2020, 7, 1),
+            date(2021, 10, 1),
+            date(2022, 7, 1),
+            date(2024, 4, 1),
+        ):
+            with self.subTest(day=day):
+                self.assertTrue(calendar.is_trading_day(Market.US, day))
+
 
 if __name__ == "__main__":
     unittest.main()
