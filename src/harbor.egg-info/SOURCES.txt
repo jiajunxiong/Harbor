@@ -251,6 +251,7 @@ tests/test_test_access_guard.py
 tests/test_test_set_isolation.py
 tests/test_trade_metrics.py
 tests/test_trading_calendar.py
+tests/test_train_validation_replay.py
 tests/test_training_fit.py
 tests/test_trial_budget.py
 tests/test_trial_reconciliation.py
