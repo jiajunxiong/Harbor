@@ -85,6 +85,7 @@ src/harbor/core/replay_manifest.py
 src/harbor/core/result_export.py
 src/harbor/core/resume_policy.py
 src/harbor/core/review_queue.py
+src/harbor/core/rolling_oos.py
 src/harbor/core/rolling_train.py
 src/harbor/core/rolling_validate.py
 src/harbor/core/rolling_window.py
@@ -248,6 +249,7 @@ tests/test_result_export.py
 tests/test_resume_policy.py
 tests/test_review_queue.py
 tests/test_risk_boundary_review.py
+tests/test_rolling_oos.py
 tests/test_rolling_train.py
 tests/test_rolling_validate.py
 tests/test_rolling_window.py
