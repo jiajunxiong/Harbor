@@ -88,6 +88,7 @@ src/harbor/core/suspension.py
 src/harbor/core/target_weight.py
 src/harbor/core/trade_metrics.py
 src/harbor/core/trading_calendar.py
+src/harbor/core/training_fit.py
 src/harbor/core/trial_budget.py
 src/harbor/core/trial_registry.py
 src/harbor/core/validation.py
@@ -239,6 +240,7 @@ tests/test_suspension.py
 tests/test_target_weight.py
 tests/test_trade_metrics.py
 tests/test_trading_calendar.py
+tests/test_training_fit.py
 tests/test_trial_budget.py
 tests/test_trial_registry.py
 tests/test_validation.py
