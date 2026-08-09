@@ -66,6 +66,7 @@ src/harbor/core/ledger_reconciliation.py
 src/harbor/core/market_registry.py
 src/harbor/core/market_selector.py
 src/harbor/core/order_drafts.py
+src/harbor/core/parameter_constraints.py
 src/harbor/core/parameter_space.py
 src/harbor/core/performance_metrics.py
 src/harbor/core/point_in_time.py
@@ -202,6 +203,7 @@ tests/test_mvp2_acceptance_record.py
 tests/test_mvp_status_update.py
 tests/test_ohlc_checks.py
 tests/test_order_drafts.py
+tests/test_parameter_constraints.py
 tests/test_parameter_space.py
 tests/test_performance_baseline.py
 tests/test_performance_metrics.py

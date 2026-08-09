@@ -24,6 +24,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from harbor.core.backtest_domain import Market
 from harbor.core.validation_domain import Parameter
 
 ParameterValue = float | int | bool | str | None
@@ -80,6 +81,8 @@ class DeclaredParameter(BaseModel):
     step: float | None = None
     allowed: tuple[ParameterValue, ...] = ()
     default: ParameterValue = None
+    markets: tuple[Market, ...] = ()
+    for_evaluation_only: bool = False
 
     @model_validator(mode="after")
     def _validate_declaration(self) -> "DeclaredParameter":
@@ -185,7 +188,7 @@ class DeclaredParameter(BaseModel):
             )
 
     def readable(self) -> str:
-        """Render the declaration as one line."""
+        """Render the declaration as one line (SP 3.15 / 3.16)."""
         bounds = ""
         if self.domain in _NUMERIC_DOMAINS:
             bounds = f" [{self.minimum}, {self.maximum}]"
@@ -194,7 +197,14 @@ class DeclaredParameter(BaseModel):
         elif self.domain is ParameterDomain.CATEGORICAL:
             bounds = f" {list(self.allowed)}"
         default = f" default {self.default}" if self.default is not None else ""
-        return f"{self.name} ({self.kind.value}, {self.domain.value}){bounds}{default}"
+        markets = ""
+        if self.markets:
+            markets = " markets " + ",".join(market.value for market in self.markets)
+        evaluation = " (evaluation only)" if self.for_evaluation_only else ""
+        return (
+            f"{self.name} ({self.kind.value}, {self.domain.value}){bounds}{default}"
+            f"{markets}{evaluation}"
+        )
 
 
 class ParameterSpace(BaseModel):
@@ -288,6 +298,8 @@ def declare_parameter(
     step: float | None = None,
     allowed: tuple[ParameterValue, ...] = (),
     default: ParameterValue = None,
+    markets: tuple[Market, ...] = (),
+    for_evaluation_only: bool = False,
 ) -> DeclaredParameter:
     """Build one declared parameter with ergonomic keyword arguments (SP 3.15)."""
     return DeclaredParameter(
@@ -299,6 +311,8 @@ def declare_parameter(
         step=step,
         allowed=allowed,
         default=default,
+        markets=markets,
+        for_evaluation_only=for_evaluation_only,
     )
 
 
