@@ -55,6 +55,7 @@ src/harbor/core/factor_snapshot.py
 src/harbor/core/factor_standardization.py
 src/harbor/core/factor_volatility.py
 src/harbor/core/fill_price.py
+src/harbor/core/final_holdout.py
 src/harbor/core/fold_calendar_align.py
 src/harbor/core/frozen_data_reader.py
 src/harbor/core/fx.py
@@ -199,6 +200,7 @@ tests/test_factor_standardization.py
 tests/test_factor_unit_suite.py
 tests/test_factor_volatility.py
 tests/test_fill_price.py
+tests/test_final_holdout.py
 tests/test_financial_checks.py
 tests/test_fold_calendar_align.py
 tests/test_frozen_data_reader.py
