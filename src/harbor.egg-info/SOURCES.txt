@@ -85,6 +85,7 @@ src/harbor/core/quality_checks.py
 src/harbor/core/quality_correlation.py
 src/harbor/core/quality_policy.py
 src/harbor/core/quality_report.py
+src/harbor/core/reaccess_policy.py
 src/harbor/core/rebalance_schedule.py
 src/harbor/core/recalculation.py
 src/harbor/core/replay_manifest.py
@@ -248,6 +249,7 @@ tests/test_quality_checks.py
 tests/test_quality_correlation.py
 tests/test_quality_policy.py
 tests/test_quality_report.py
+tests/test_reaccess_policy.py
 tests/test_readme_guide.py
 tests/test_real_data_contract.py
 tests/test_rebalance_schedule.py
