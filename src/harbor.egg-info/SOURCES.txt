@@ -236,6 +236,7 @@ tests/test_oos_dispersion.py
 tests/test_oos_isolation_integration.py
 tests/test_oos_performance.py
 tests/test_oos_reconcile.py
+tests/test_oos_replay.py
 tests/test_order_drafts.py
 tests/test_parameter_budget.py
 tests/test_parameter_constraints.py
