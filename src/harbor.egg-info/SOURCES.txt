@@ -233,6 +233,7 @@ tests/test_ohlc_checks.py
 tests/test_oos_chain.py
 tests/test_oos_concat.py
 tests/test_oos_dispersion.py
+tests/test_oos_isolation_integration.py
 tests/test_oos_performance.py
 tests/test_oos_reconcile.py
 tests/test_order_drafts.py
