@@ -32,6 +32,7 @@ src/harbor/core/concentration.py
 src/harbor/core/consistency_check.py
 src/harbor/core/corporate_actions.py
 src/harbor/core/cost_hk.py
+src/harbor/core/cost_stress.py
 src/harbor/core/cost_us.py
 src/harbor/core/coverage_gate.py
 src/harbor/core/coverage_scoring.py
@@ -170,6 +171,7 @@ tests/test_corporate_action_regression.py
 tests/test_corporate_actions.py
 tests/test_cost_calendar_suite.py
 tests/test_cost_hk.py
+tests/test_cost_stress.py
 tests/test_cost_us.py
 tests/test_coverage_checks.py
 tests/test_coverage_gate.py
