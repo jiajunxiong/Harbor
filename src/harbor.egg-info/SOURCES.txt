@@ -69,6 +69,7 @@ src/harbor/core/ingestion.py
 src/harbor/core/interfaces.py
 src/harbor/core/ledger.py
 src/harbor/core/ledger_reconciliation.py
+src/harbor/core/liquidity_stress.py
 src/harbor/core/market_environment.py
 src/harbor/core/market_registry.py
 src/harbor/core/market_selector.py
@@ -225,6 +226,7 @@ tests/test_integration.py
 tests/test_interfaces.py
 tests/test_ledger.py
 tests/test_ledger_reconciliation.py
+tests/test_liquidity_stress.py
 tests/test_logging.py
 tests/test_lookahead_protection.py
 tests/test_market_environment.py
