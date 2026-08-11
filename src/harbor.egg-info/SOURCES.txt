@@ -43,6 +43,7 @@ src/harbor/core/dataset_fingerprint.py
 src/harbor/core/dataset_manifest.py
 src/harbor/core/dividend_processing.py
 src/harbor/core/drawdown_events.py
+src/harbor/core/environment_attribution.py
 src/harbor/core/equity.py
 src/harbor/core/exposure.py
 src/harbor/core/factor_alignment.py
@@ -186,6 +187,7 @@ tests/test_docker_backtest_smoke.py
 tests/test_docker_smoke.py
 tests/test_drawdown_events.py
 tests/test_end_to_end_backtest.py
+tests/test_environment_attribution.py
 tests/test_equity.py
 tests/test_equity_events.py
 tests/test_example_configs.py
