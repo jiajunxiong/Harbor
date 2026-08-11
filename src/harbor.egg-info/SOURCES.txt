@@ -62,6 +62,7 @@ src/harbor/core/final_holdout.py
 src/harbor/core/fold_calendar_align.py
 src/harbor/core/frozen_data_reader.py
 src/harbor/core/fx.py
+src/harbor/core/fx_stress.py
 src/harbor/core/history_window.py
 src/harbor/core/holdout_registry.py
 src/harbor/core/html_report.py
@@ -218,6 +219,7 @@ tests/test_frozen_dataset_smoke.py
 tests/test_future_function_regression.py
 tests/test_fx.py
 tests/test_fx_repository.py
+tests/test_fx_stress.py
 tests/test_history_window.py
 tests/test_holdout_registry.py
 tests/test_html_report.py
