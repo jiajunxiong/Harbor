@@ -26,6 +26,7 @@ src/harbor/core/backtest_interfaces.py
 src/harbor/core/backtest_runner.py
 src/harbor/core/backtest_state_machine.py
 src/harbor/core/benchmark.py
+src/harbor/core/calendar_stress.py
 src/harbor/core/candidate_filter.py
 src/harbor/core/candidate_selection.py
 src/harbor/core/concentration.py
@@ -161,6 +162,7 @@ tests/test_backtest_repositories.py
 tests/test_backtest_service.py
 tests/test_backtest_state_machine.py
 tests/test_benchmark.py
+tests/test_calendar_stress.py
 tests/test_candidate_filter.py
 tests/test_candidate_selection.py
 tests/test_cli.py
