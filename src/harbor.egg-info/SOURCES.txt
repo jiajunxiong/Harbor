@@ -84,6 +84,7 @@ src/harbor/core/oos_performance.py
 src/harbor/core/oos_reconcile.py
 src/harbor/core/order_drafts.py
 src/harbor/core/parameter_constraints.py
+src/harbor/core/parameter_neighborhood.py
 src/harbor/core/parameter_selection_explanation.py
 src/harbor/core/parameter_space.py
 src/harbor/core/performance_metrics.py
@@ -257,6 +258,7 @@ tests/test_oos_replay.py
 tests/test_order_drafts.py
 tests/test_parameter_budget.py
 tests/test_parameter_constraints.py
+tests/test_parameter_neighborhood.py
 tests/test_parameter_selection_explanation.py
 tests/test_parameter_space.py
 tests/test_performance_baseline.py
