@@ -109,6 +109,7 @@ src/harbor/core/rolling_window.py
 src/harbor/core/run_identity.py
 src/harbor/core/run_logging.py
 src/harbor/core/selection_report.py
+src/harbor/core/stability_rule.py
 src/harbor/core/stock_pool.py
 src/harbor/core/stock_pool_stress.py
 src/harbor/core/suspension.py
@@ -295,6 +296,7 @@ tests/test_rolling_window.py
 tests/test_run_identity.py
 tests/test_run_logging.py
 tests/test_selection_report.py
+tests/test_stability_rule.py
 tests/test_static_checks.py
 tests/test_stock_pool.py
 tests/test_stock_pool_stress.py
