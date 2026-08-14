@@ -288,6 +288,7 @@ tests/test_result_export.py
 tests/test_resume_policy.py
 tests/test_review_queue.py
 tests/test_risk_boundary_review.py
+tests/test_robustness_regression.py
 tests/test_rolling_backtest_unit.py
 tests/test_rolling_failure.py
 tests/test_rolling_oos.py
