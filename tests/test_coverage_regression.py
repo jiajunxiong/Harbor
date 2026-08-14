@@ -23,7 +23,6 @@ import unittest
 from harbor.core.backtest_domain import Market
 from harbor.core.coverage_gate import (
     CoverageGateResult,
-    CoverageThresholdResult,
     evaluate_coverage,
 )
 from harbor.core.coverage_scoring import (
@@ -46,9 +45,7 @@ def _score(
     return CoverageScore(
         market=Market.HK,
         item=item,
-        measurement=CoverageMeasurement(
-            covered=covered, denominator=denominator, gap=gap
-        ),
+        measurement=CoverageMeasurement(covered=covered, denominator=denominator, gap=gap),
     )
 
 
@@ -90,9 +87,7 @@ class PriceGapTests(unittest.TestCase):
         self.assertFalse(result.passes)
 
     def test_price_at_threshold_passes(self) -> None:
-        result = _evaluate(
-            _coverage(_score(ManifestComponent.PRICES, covered=95, denominator=100))
-        )
+        result = _evaluate(_coverage(_score(ManifestComponent.PRICES, covered=95, denominator=100)))
         self.assertIsNone(result.results[0].severity)
         self.assertFalse(result.blocked)
         self.assertTrue(result.passes)
@@ -170,9 +165,7 @@ class FundamentalGapTests(unittest.TestCase):
 
     def test_fundamental_shortfall_warns(self) -> None:
         result = _evaluate(
-            _coverage(
-                _score(ManifestComponent.FUNDAMENTALS, covered=50, denominator=100)
-            )
+            _coverage(_score(ManifestComponent.FUNDAMENTALS, covered=50, denominator=100))
         )
         self.assertIs(result.results[0].severity, CoverageSeverity.WARNING)
         self.assertFalse(result.blocked)
@@ -180,17 +173,13 @@ class FundamentalGapTests(unittest.TestCase):
 
     def test_fundamental_at_threshold_passes(self) -> None:
         result = _evaluate(
-            _coverage(
-                _score(ManifestComponent.FUNDAMENTALS, covered=70, denominator=100)
-            )
+            _coverage(_score(ManifestComponent.FUNDAMENTALS, covered=70, denominator=100))
         )
         self.assertTrue(result.results[0].passed)
 
     def test_fundamental_full_coverage_passes(self) -> None:
         result = _evaluate(
-            _coverage(
-                _score(ManifestComponent.FUNDAMENTALS, covered=100, denominator=100)
-            )
+            _coverage(_score(ManifestComponent.FUNDAMENTALS, covered=100, denominator=100))
         )
         self.assertTrue(result.results[0].passed)
 
@@ -263,9 +252,7 @@ class FxGapTests(unittest.TestCase):
 
     def test_missing_fx_not_qualified_when_required(self) -> None:
         result = _evaluate(
-            _coverage(
-                _score(ManifestComponent.FX, covered=0, denominator=100, gap="missing")
-            )
+            _coverage(_score(ManifestComponent.FX, covered=0, denominator=100, gap="missing"))
         )
         self.assertIs(result.results[0].severity, CoverageSeverity.NOT_QUALIFIED)
         self.assertIn("required but missing", result.results[0].reason)
@@ -274,18 +261,14 @@ class FxGapTests(unittest.TestCase):
 
     def test_missing_fx_warns_when_not_required(self) -> None:
         result = _evaluate(
-            _coverage(
-                _score(ManifestComponent.FX, covered=0, denominator=100, gap="missing")
-            ),
+            _coverage(_score(ManifestComponent.FX, covered=0, denominator=100, gap="missing")),
             fx_required=False,
         )
         self.assertIs(result.results[0].severity, CoverageSeverity.WARNING)
         self.assertTrue(result.passes)
 
     def test_full_fx_coverage_passes(self) -> None:
-        result = _evaluate(
-            _coverage(_score(ManifestComponent.FX, covered=100, denominator=100))
-        )
+        result = _evaluate(_coverage(_score(ManifestComponent.FX, covered=100, denominator=100)))
         self.assertTrue(result.results[0].passed)
 
 
@@ -400,7 +383,7 @@ class GateAggregationTests(unittest.TestCase):
             _coverage(_score(ManifestComponent.PRICES, covered=90, denominator=100))
         ).results[0]
         self.assertIn("HK/prices", threshold.readable())
-        self.assertIn("ERROR", threshold.readable())
+        self.assertIn("error", threshold.readable())
 
 
 if __name__ == "__main__":

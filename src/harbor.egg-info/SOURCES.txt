@@ -185,6 +185,7 @@ tests/test_cost_stress.py
 tests/test_cost_us.py
 tests/test_coverage_checks.py
 tests/test_coverage_gate.py
+tests/test_coverage_regression.py
 tests/test_coverage_scoring.py
 tests/test_cross_market_merge.py
 tests/test_csv_export.py
