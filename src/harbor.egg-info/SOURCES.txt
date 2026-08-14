@@ -81,6 +81,7 @@ src/harbor/core/multiple_trial_penalty.py
 src/harbor/core/oos_chain.py
 src/harbor/core/oos_concat.py
 src/harbor/core/oos_conclusion.py
+src/harbor/core/oos_csv.py
 src/harbor/core/oos_dispersion.py
 src/harbor/core/oos_export.py
 src/harbor/core/oos_performance.py
@@ -258,6 +259,7 @@ tests/test_ohlc_checks.py
 tests/test_oos_chain.py
 tests/test_oos_concat.py
 tests/test_oos_conclusion.py
+tests/test_oos_csv.py
 tests/test_oos_dispersion.py
 tests/test_oos_export.py
 tests/test_oos_isolation_integration.py
