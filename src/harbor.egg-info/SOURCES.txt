@@ -305,6 +305,7 @@ tests/test_static_checks.py
 tests/test_stock_pool.py
 tests/test_stock_pool_stress.py
 tests/test_stress_registry.py
+tests/test_stress_replay.py
 tests/test_survivorship_bias.py
 tests/test_suspension.py
 tests/test_target_weight.py
