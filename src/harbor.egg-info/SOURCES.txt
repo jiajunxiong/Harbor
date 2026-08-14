@@ -79,6 +79,7 @@ src/harbor/core/market_selector.py
 src/harbor/core/multiple_trial_penalty.py
 src/harbor/core/oos_chain.py
 src/harbor/core/oos_concat.py
+src/harbor/core/oos_conclusion.py
 src/harbor/core/oos_dispersion.py
 src/harbor/core/oos_performance.py
 src/harbor/core/oos_reconcile.py
@@ -253,6 +254,7 @@ tests/test_mvp_status_update.py
 tests/test_ohlc_checks.py
 tests/test_oos_chain.py
 tests/test_oos_concat.py
+tests/test_oos_conclusion.py
 tests/test_oos_dispersion.py
 tests/test_oos_isolation_integration.py
 tests/test_oos_performance.py
