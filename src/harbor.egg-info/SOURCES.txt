@@ -263,6 +263,7 @@ tests/test_parameter_constraints.py
 tests/test_parameter_neighborhood.py
 tests/test_parameter_selection_explanation.py
 tests/test_parameter_space.py
+tests/test_parameter_stability.py
 tests/test_performance_baseline.py
 tests/test_performance_metrics.py
 tests/test_point_in_time.py
