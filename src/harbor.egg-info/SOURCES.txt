@@ -30,6 +30,7 @@ src/harbor/core/calendar_stress.py
 src/harbor/core/candidate_filter.py
 src/harbor/core/candidate_selection.py
 src/harbor/core/concentration.py
+src/harbor/core/conclusion_evidence.py
 src/harbor/core/consistency_check.py
 src/harbor/core/corporate_action_stress.py
 src/harbor/core/corporate_actions.py
@@ -173,6 +174,7 @@ tests/test_candidate_filter.py
 tests/test_candidate_selection.py
 tests/test_cli.py
 tests/test_concentration.py
+tests/test_conclusion_evidence.py
 tests/test_config.py
 tests/test_consistency_check.py
 tests/test_corporate_action_backtest.py
