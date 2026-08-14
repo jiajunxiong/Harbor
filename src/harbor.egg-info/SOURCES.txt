@@ -144,6 +144,7 @@ src/harbor/infrastructure/data_providers/mock.py
 src/harbor/infrastructure/data_providers/yfinance.py
 src/harbor/services/__init__.py
 src/harbor/services/backtest.py
+src/harbor/services/validation.py
 src/harbor/storage/__init__.py
 src/harbor/storage/backtest_data_reader.py
 src/harbor/storage/backtest_repositories.py
@@ -330,6 +331,7 @@ tests/test_trial_reconciliation.py
 tests/test_trial_registry.py
 tests/test_validation.py
 tests/test_validation_apply.py
+tests/test_validation_cli.py
 tests/test_validation_config.py
 tests/test_validation_config_loader.py
 tests/test_validation_domain.py

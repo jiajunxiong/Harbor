@@ -34,6 +34,7 @@ from harbor.services.backtest import (
     run_backtest_from_config,
     show_backtest,
 )
+from harbor.services.validation import run_validation_from_config
 from harbor.storage.repositories import Repository
 
 
@@ -154,6 +155,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Data cutoff date (ISO); defaults to the config end date.",
     )
+    validation_parser = subparsers.add_parser(
+        "validation", help="Create and inspect out-of-sample validation runs."
+    )
+    validation_subparsers = validation_parser.add_subparsers(
+        dest="validation_command", required=True
+    )
+    validation_run_parser = validation_subparsers.add_parser(
+        "run", help="Create a DRAFT validation run from a versioned config file."
+    )
+    validation_run_parser.add_argument(
+        "--config", required=True, help="Path to the validation configuration (YAML/JSON)."
+    )
     return parser
 
 
@@ -178,6 +191,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _show_quality(parser, arguments)
     if arguments.command == "backtest":
         return _show_backtest(parser, arguments)
+    if arguments.command == "validation":
+        return _show_validation(parser, arguments)
     parser.error(f"Unsupported command: {arguments.command}")
     return 2
 
@@ -490,6 +505,26 @@ def _show_backtest_resume(parser: argparse.ArgumentParser, arguments: argparse.N
             )
     except (OSError, ValueError) as error:
         parser.error(f"Backtest resume failed: {error}")
+        return 2
+    summary = {"run_id": result.run_id, "status": result.status.value}
+    sys.stdout.write(f"{json.dumps(summary, sort_keys=True)}\n")
+    return 0
+
+
+def _show_validation(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """Dispatch the validation subcommands."""
+    if arguments.validation_command == "run":
+        return _show_validation_run(parser, arguments)
+    parser.error(f"Unsupported validation command: {arguments.validation_command}")
+    return 2
+
+
+def _show_validation_run(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """Create a DRAFT validation run and render its id and status (SP 3.69)."""
+    try:
+        result = run_validation_from_config(config_path=arguments.config)
+    except (OSError, ValueError) as error:
+        parser.error(f"Validation run failed: {error}")
         return 2
     summary = {"run_id": result.run_id, "status": result.status.value}
     sys.stdout.write(f"{json.dumps(summary, sort_keys=True)}\n")
