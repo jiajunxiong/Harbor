@@ -9,6 +9,7 @@ YAML config.
 
 import io
 import json
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -19,8 +20,15 @@ from harbor.core.validation_domain import ValidationStatus
 from harbor.services.validation import (
     ValidationCommandResult,
     ValidationServiceError,
+    advance_validation,
     run_validation_from_config,
 )
+
+ENVIRONMENT = {
+    "DATABASE_URL": "postgresql+psycopg://harbor:secret@localhost:5432/harbor",
+    "DATA_PROVIDER_HK": "mock",
+    "DATA_PROVIDER_US": "mock",
+}
 
 
 def _write_config(tmp: str, *, markets: str = "HK") -> str:
@@ -136,6 +144,130 @@ class ValidationRunServiceTests(unittest.TestCase):
     def test_service_rejects_missing_file(self) -> None:
         with self.assertRaises((OSError, ValueError)):
             run_validation_from_config("/no/such/validation.yaml")
+
+
+class ValidationRunCommandCliTests(unittest.TestCase):
+    """Verify the ``validation freeze / tune / evaluate`` surface (SP 3.70)."""
+
+    def test_validation_freeze_prints_frozen_status(self) -> None:
+        from harbor.cli import main
+
+        result = ValidationCommandResult(run_id="run-abc", status=ValidationStatus.DATA_FROZEN)
+        output = io.StringIO()
+        with (
+            patch.dict(os.environ, ENVIRONMENT, clear=True),
+            patch("harbor.cli.create_engine"),
+            patch("harbor.cli.run_validation_command", return_value=result) as command_mock,
+        ):
+            with redirect_stdout(output), redirect_stderr(io.StringIO()):
+                exit_code = main(["validation", "freeze", "run-abc"])
+
+        self.assertEqual(exit_code, 0)
+        summary = json.loads(output.getvalue())
+        self.assertEqual(summary, {"run_id": "run-abc", "status": "DATA_FROZEN"})
+        self.assertEqual(command_mock.call_args.args[1], "run-abc")
+        self.assertEqual(command_mock.call_args.kwargs["command"], "freeze")
+
+    def test_validation_tune_prints_tuning_status(self) -> None:
+        from harbor.cli import main
+
+        result = ValidationCommandResult(run_id="run-x", status=ValidationStatus.TUNING)
+        output = io.StringIO()
+        with (
+            patch.dict(os.environ, ENVIRONMENT, clear=True),
+            patch("harbor.cli.create_engine"),
+            patch("harbor.cli.run_validation_command", return_value=result) as command_mock,
+        ):
+            with redirect_stdout(output), redirect_stderr(io.StringIO()):
+                exit_code = main(["validation", "tune", "run-x"])
+
+        self.assertEqual(exit_code, 0)
+        summary = json.loads(output.getvalue())
+        self.assertEqual(summary, {"run_id": "run-x", "status": "TUNING"})
+        self.assertEqual(command_mock.call_args.kwargs["command"], "tune")
+
+    def test_validation_evaluate_prints_evaluated_status(self) -> None:
+        from harbor.cli import main
+
+        result = ValidationCommandResult(run_id="run-y", status=ValidationStatus.EVALUATED)
+        output = io.StringIO()
+        with (
+            patch.dict(os.environ, ENVIRONMENT, clear=True),
+            patch("harbor.cli.create_engine"),
+            patch("harbor.cli.run_validation_command", return_value=result) as command_mock,
+        ):
+            with redirect_stdout(output), redirect_stderr(io.StringIO()):
+                exit_code = main(["validation", "evaluate", "run-y"])
+
+        self.assertEqual(exit_code, 0)
+        summary = json.loads(output.getvalue())
+        self.assertEqual(summary, {"run_id": "run-y", "status": "EVALUATED"})
+        self.assertEqual(command_mock.call_args.kwargs["command"], "evaluate")
+
+    def test_validation_state_machine_violation_is_actionable_error(self) -> None:
+        from harbor.cli import main
+
+        stderr = io.StringIO()
+        with (
+            patch.dict(os.environ, ENVIRONMENT, clear=True),
+            patch("harbor.cli.create_engine"),
+            patch(
+                "harbor.cli.run_validation_command",
+                side_effect=ValidationServiceError(
+                    "Validation command 'evaluate' is not allowed for run 'run-abc' "
+                    "in status DRAFT; valid commands follow DRAFT -> DATA_FROZEN -> "
+                    "TUNING -> TEST_LOCKED -> EVALUATED (SP 3.70)."
+                ),
+            ),
+        ):
+            with self.assertRaises(SystemExit) as exit_context:
+                with redirect_stdout(io.StringIO()), redirect_stderr(stderr):
+                    main(["validation", "evaluate", "run-abc"])
+
+        self.assertEqual(exit_context.exception.code, 2)
+        message = stderr.getvalue()
+        self.assertIn("Validation evaluate failed", message)
+        self.assertIn("DRAFT -> DATA_FROZEN -> TUNING -> TEST_LOCKED -> EVALUATED", message)
+
+
+class AdvanceValidationTests(unittest.TestCase):
+    """The state-machine command transitions and violations (SP 3.70)."""
+
+    def test_freeze_transitions_draft_to_frozen(self) -> None:
+        result = advance_validation("run-1", ValidationStatus.DRAFT, command="freeze")
+        self.assertEqual(result.run_id, "run-1")
+        self.assertEqual(result.status, ValidationStatus.DATA_FROZEN)
+
+    def test_tune_transitions_frozen_to_tuning(self) -> None:
+        result = advance_validation("run-1", ValidationStatus.DATA_FROZEN, command="tune")
+        self.assertEqual(result.status, ValidationStatus.TUNING)
+
+    def test_evaluate_transitions_locked_to_evaluated(self) -> None:
+        result = advance_validation("run-1", ValidationStatus.TEST_LOCKED, command="evaluate")
+        self.assertEqual(result.status, ValidationStatus.EVALUATED)
+
+    def test_freeze_on_frozen_is_actionable_error(self) -> None:
+        with self.assertRaises(ValidationServiceError) as context:
+            advance_validation("run-1", ValidationStatus.DATA_FROZEN, command="freeze")
+        message = str(context.exception)
+        self.assertIn("'freeze' is not allowed", message)
+        self.assertIn("DATA_FROZEN", message)
+        self.assertIn("EVALUATED", message)
+
+    def test_tune_on_draft_is_actionable_error(self) -> None:
+        with self.assertRaises(ValidationServiceError):
+            advance_validation("run-1", ValidationStatus.DRAFT, command="tune")
+
+    def test_evaluate_on_draft_is_actionable_error(self) -> None:
+        with self.assertRaises(ValidationServiceError) as context:
+            advance_validation("run-1", ValidationStatus.DRAFT, command="evaluate")
+        message = str(context.exception)
+        self.assertIn("'evaluate' is not allowed", message)
+        self.assertIn("DRAFT -> DATA_FROZEN", message)
+
+    def test_unknown_command_is_error(self) -> None:
+        with self.assertRaises(ValidationServiceError):
+            advance_validation("run-1", ValidationStatus.DRAFT, command="export")
 
 
 if __name__ == "__main__":

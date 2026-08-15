@@ -34,7 +34,10 @@ from harbor.services.backtest import (
     run_backtest_from_config,
     show_backtest,
 )
-from harbor.services.validation import run_validation_from_config
+from harbor.services.validation import (
+    run_validation_command,
+    run_validation_from_config,
+)
 from harbor.storage.repositories import Repository
 
 
@@ -167,6 +170,18 @@ def build_parser() -> argparse.ArgumentParser:
     validation_run_parser.add_argument(
         "--config", required=True, help="Path to the validation configuration (YAML/JSON)."
     )
+    freeze_parser = validation_subparsers.add_parser(
+        "freeze", help="Freeze the dataset, calendar and split (DRAFT -> DATA_FROZEN)."
+    )
+    freeze_parser.add_argument("run_id", help="The validation run id.")
+    tune_parser = validation_subparsers.add_parser(
+        "tune", help="Begin parameter tuning (DATA_FROZEN -> TUNING)."
+    )
+    tune_parser.add_argument("run_id", help="The validation run id.")
+    evaluate_parser = validation_subparsers.add_parser(
+        "evaluate", help="Evaluate the independent holdout (TEST_LOCKED -> EVALUATED)."
+    )
+    evaluate_parser.add_argument("run_id", help="The validation run id.")
     return parser
 
 
@@ -515,8 +530,38 @@ def _show_validation(parser: argparse.ArgumentParser, arguments: argparse.Namesp
     """Dispatch the validation subcommands."""
     if arguments.validation_command == "run":
         return _show_validation_run(parser, arguments)
+    if arguments.validation_command == "freeze":
+        return _show_validation_command(parser, arguments, command="freeze")
+    if arguments.validation_command == "tune":
+        return _show_validation_command(parser, arguments, command="tune")
+    if arguments.validation_command == "evaluate":
+        return _show_validation_command(parser, arguments, command="evaluate")
     parser.error(f"Unsupported validation command: {arguments.validation_command}")
     return 2
+
+
+def _show_validation_command(
+    parser: argparse.ArgumentParser,
+    arguments: argparse.Namespace,
+    *,
+    command: str,
+) -> int:
+    """Apply one validation state-machine command and render the new status."""
+    try:
+        settings = Settings()  # type: ignore[call-arg]
+    except ValidationError as error:
+        parser.error(f"Invalid configuration: {error}")
+        return 2
+    try:
+        engine = create_engine(settings.database_url)
+        with engine.begin() as connection:
+            result = run_validation_command(connection, arguments.run_id, command=command)
+    except (OSError, ValueError) as error:
+        parser.error(f"Validation {command} failed: {error}")
+        return 2
+    summary = {"run_id": result.run_id, "status": result.status.value}
+    sys.stdout.write(f"{json.dumps(summary, sort_keys=True)}\n")
+    return 0
 
 
 def _show_validation_run(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
