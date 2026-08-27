@@ -309,6 +309,7 @@ tests/test_robustness_regression.py
 tests/test_rolling_backtest_unit.py
 tests/test_rolling_failure.py
 tests/test_rolling_oos.py
+tests/test_rolling_oos_integration.py
 tests/test_rolling_train.py
 tests/test_rolling_validate.py
 tests/test_rolling_window.py
