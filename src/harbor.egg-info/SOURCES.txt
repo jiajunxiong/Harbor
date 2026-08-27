@@ -266,6 +266,7 @@ tests/test_oos_csv.py
 tests/test_oos_dispersion.py
 tests/test_oos_export.py
 tests/test_oos_isolation_integration.py
+tests/test_oos_method_limitations.py
 tests/test_oos_performance.py
 tests/test_oos_reconcile.py
 tests/test_oos_replay.py
