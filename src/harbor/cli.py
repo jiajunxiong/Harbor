@@ -35,8 +35,10 @@ from harbor.services.backtest import (
     show_backtest,
 )
 from harbor.services.validation import (
+    report_validation,
     run_validation_command,
     run_validation_from_config,
+    show_validation,
 )
 from harbor.storage.repositories import Repository
 
@@ -182,6 +184,20 @@ def build_parser() -> argparse.ArgumentParser:
         "evaluate", help="Evaluate the independent holdout (TEST_LOCKED -> EVALUATED)."
     )
     evaluate_parser.add_argument("run_id", help="The validation run id.")
+    show_parser = validation_subparsers.add_parser(
+        "show", help="Show a validation run's status, split and artifact counts."
+    )
+    show_parser.add_argument("run_id", help="The validation run id.")
+    report_parser = validation_subparsers.add_parser(
+        "report", help="Render a validation run's report as JSON, CSV or HTML."
+    )
+    report_parser.add_argument("run_id", help="The validation run id.")
+    report_parser.add_argument(
+        "--format",
+        choices=("json", "csv", "html"),
+        default="json",
+        help="Report format; defaults to json.",
+    )
     return parser
 
 
@@ -536,8 +552,52 @@ def _show_validation(parser: argparse.ArgumentParser, arguments: argparse.Namesp
         return _show_validation_command(parser, arguments, command="tune")
     if arguments.validation_command == "evaluate":
         return _show_validation_command(parser, arguments, command="evaluate")
+    if arguments.validation_command == "show":
+        return _show_validation_show(parser, arguments)
+    if arguments.validation_command == "report":
+        return _show_validation_report(parser, arguments)
     parser.error(f"Unsupported validation command: {arguments.validation_command}")
     return 2
+
+
+def _show_validation_show(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """Render a validation run's status view (SP 3.71)."""
+    try:
+        settings = Settings()  # type: ignore[call-arg]
+    except ValidationError as error:
+        parser.error(f"Invalid configuration: {error}")
+        return 2
+    try:
+        engine = create_engine(settings.database_url)
+        with engine.connect() as connection:
+            result = show_validation(connection=connection, run_id=arguments.run_id)
+    except (OSError, ValueError) as error:
+        parser.error(f"Validation show failed: {error}")
+        return 2
+    sys.stdout.write(f"{json.dumps(result.to_dict(), sort_keys=True)}\n")
+    return 0
+
+
+def _show_validation_report(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """Render a validation run's report as JSON, CSV or HTML (SP 3.71)."""
+    try:
+        settings = Settings()  # type: ignore[call-arg]
+    except ValidationError as error:
+        parser.error(f"Invalid configuration: {error}")
+        return 2
+    try:
+        engine = create_engine(settings.database_url)
+        with engine.connect() as connection:
+            output = report_validation(
+                connection=connection,
+                run_id=arguments.run_id,
+                report_format=arguments.format,
+            )
+    except (OSError, ValueError) as error:
+        parser.error(f"Validation report failed: {error}")
+        return 2
+    sys.stdout.write(output + "\n")
+    return 0
 
 
 def _show_validation_command(

@@ -1,0 +1,59 @@
+{
+  "strategy": "shareholder-return",
+  "strategy_version": "1.0.0",
+  "description": "US small mock validation example (frozen split / budget / coverage / stress), research only",
+  "markets": ["US"],
+  "base_currency": "USD",
+  "data_cutoff": "2022-12-31",
+  "code_version": "1.0.0",
+  "split": {
+    "train_start": "2019-01-01",
+    "train_end": "2020-12-31",
+    "validation_start": "2021-01-01",
+    "validation_end": "2021-12-31",
+    "test_start": "2022-01-01",
+    "test_end": "2022-12-31"
+  },
+  "rolling": {
+    "mode": "expanding",
+    "step_days": 252,
+    "retrain_frequency": "every_fold"
+  },
+  "tuning": {
+    "primary_metric": "sharpe",
+    "metric_direction": "higher_better",
+    "max_trials": 20,
+    "random_seed": 42,
+    "min_validation_days": 63
+  },
+  "coverage": {
+    "min_price_coverage_pct": 95.0,
+    "min_stock_pool_coverage_pct": 90.0,
+    "min_fundamental_coverage_pct": 70.0,
+    "fx_required": true,
+    "historical_stock_pool_required": true,
+    "action_terms_required": true
+  },
+  "stress": [
+    {
+      "name": "cost-stress-2x",
+      "cost_multiplier": 2.0,
+      "slippage_bps": 0,
+      "participation_rate": 0.1,
+      "fx_shift_bps": 0
+    },
+    {
+      "name": "liquidity-stress-50bps",
+      "cost_multiplier": 1.0,
+      "slippage_bps": 50,
+      "participation_rate": 0.05,
+      "fx_shift_bps": 0
+    }
+  ],
+  "conclusion": {
+    "min_qualified_fold_ratio": 0.8,
+    "max_allowed_drawdown_pct": 30.0,
+    "max_allowed_stress_drawdown_pct": 40.0,
+    "max_parameter_dispersion": 0.5
+  }
+}

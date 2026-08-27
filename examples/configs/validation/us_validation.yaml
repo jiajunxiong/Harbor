@@ -1,0 +1,80 @@
+# 美股样本外验证示例配置 (US Example Validation Configuration)
+#
+# 研究用途 (Research purpose):
+#   本配置仅用于 Harbor 样本外验证管线 (MVP 3) 的演示、验证与教学，不构成投资
+#   建议，也不表示任何未来收益或回撤承诺。它演示的是“小规模 Mock 验证研究假设”，
+#   而非可交易参数或真实市场事实。
+#
+# 显式演示 (SP 3.72) 四个维度：
+#   1) 冻结切分 (frozen split, SP 3.3/3.4): split 显式给出 train/validation/test
+#      边界，严格满足 train_end < validation_start <= validation_end < test_start，
+#      且 test_end <= data_cutoff；config_hash 固化冻结切分（SP 3.3）。
+#   2) 试验预算 (trial budget, SP 3.15-3.17 / 3.30): tuning.max_trials 为预算上限、
+#      random_seed 保证确定性、primary_metric 为预注册主指标；基线参数与基线指标
+#      在参数搜索前固定（SP 3.30 预注册基线）。
+#   3) 覆盖门槛 (coverage thresholds, SP 3.10): coverage 显式给出最低价格/股票池/
+#      财报覆盖率，fx_required 等阻断标志默认开启，缺口不会静默通过。
+#   4) 压力情景 (stress scenarios, SP 3.51-3.59): stress 显式预注册成本/流动性等
+#      压力情景；未登记情景不得进入结论（SP 3.59）。
+#
+# 关键假设 (Key assumptions)：
+#   - 小规模 Mock：训练 2019-2020、验证 2021、测试 2022，测试期每年一折（step 252）。
+#   - 单一市场 US、基准币种 USD；数据截点 = 测试期末。
+#   - 基线参数（搜索前固定）：cash_weight=0.05；基线指标 sharpe=0.10（SP 3.30）。
+#   - 覆盖阈值与压力情景为研究假设，不是市场事实（参见 SP 2.73/2.74 文档）。
+#   - us_validation.json 是本配置的 JSON 孪生文件，两者配置哈希一致（SP 3.3）。
+
+strategy: shareholder-return
+strategy_version: "1.0.0"
+description: "US small mock validation example (frozen split / budget / coverage / stress), research only"
+markets:
+  - US
+base_currency: USD
+data_cutoff: "2022-12-31"
+code_version: "1.0.0"
+
+split:
+  train_start: "2019-01-01"
+  train_end: "2020-12-31"
+  validation_start: "2021-01-01"
+  validation_end: "2021-12-31"
+  test_start: "2022-01-01"
+  test_end: "2022-12-31"
+
+rolling:
+  mode: expanding
+  step_days: 252
+  retrain_frequency: every_fold
+
+tuning:
+  primary_metric: sharpe
+  metric_direction: higher_better
+  max_trials: 20
+  random_seed: 42
+  min_validation_days: 63
+
+coverage:
+  min_price_coverage_pct: 95.0
+  min_stock_pool_coverage_pct: 90.0
+  min_fundamental_coverage_pct: 70.0
+  fx_required: true
+  historical_stock_pool_required: true
+  action_terms_required: true
+
+stress:
+  - name: cost-stress-2x
+    cost_multiplier: 2.0
+    slippage_bps: 0
+    participation_rate: 0.1
+    fx_shift_bps: 0
+  - name: liquidity-stress-50bps
+    cost_multiplier: 1.0
+    slippage_bps: 50
+    participation_rate: 0.05
+    fx_shift_bps: 0
+
+conclusion:
+  min_qualified_fold_ratio: 0.8
+  max_allowed_drawdown_pct: 30.0
+  max_allowed_stress_drawdown_pct: 40.0
+  max_parameter_dispersion: 0.5
