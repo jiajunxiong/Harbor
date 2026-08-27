@@ -423,19 +423,103 @@ harbor-cli backtest report <run-id> --format html
 
 ---
 
+## 🧪 样本外验证（MVP 3）
+
+> 验证输出仅用于研究，**不构成投资建议**，也不表示未来收益或回撤。
+
+### 验证前置条件
+
+样本外验证需要一份**冻结**的数据与研究环境（SP 3.6–3.10）：
+
+- **冻结切分**：训练/验证/测试边界在配置中显式冻结（SP 3.4），由 `config_hash` 固化
+  （SP 3.3，YAML/JSON 格式无关）。
+- **独立保留集**：测试集只能**一次性解锁**用于最终评估（SP 3.5 / 3.41）；参数搜索与
+  参数比较**永不**使用测试集（SP 3.21 / 3.24）。
+- **数据覆盖**：价格/股票池/财报/企业行动/日历/FX/基准的覆盖口径与门槛（SP 3.9 / 3.10），
+  缺失 FX、未知历史股票池、缺失企业行动条款不会静默通过。
+- **压力情景**：压力情景在参数搜索前**预注册**（SP 3.59），未登记情景不得进入结论。
+- 方法、口径与限制的完整说明见
+  [`docs/oos_method_and_limitations.md`](docs/oos_method_and_limitations.md)（SP 3.73）。
+
+### 验证配置
+
+仓库内置**小规模 Mock 验证示例**（SP 3.72），显式演示冻结切分、试验预算、覆盖门槛与
+压力情景，研究用途与假设见各文件头部注释与
+[`examples/configs/validation/README.md`](examples/configs/validation/README.md)：
+
+```text
+examples/configs/validation/
+├── hk_validation.yaml            # 港股 / HKD
+├── us_validation.yaml            # 美股 / USD
+├── us_validation.json            # 与 us_validation.yaml 等价的 JSON 示例
+├── cross_market_validation.yaml  # 港股 + 美股 / HKD
+└── README.md                     # 示例用途、四个演示维度与运行方式
+```
+
+### 运行与状态
+
+验证运行沿状态机推进 `DRAFT → DATA_FROZEN → TUNING → TEST_LOCKED → EVALUATED`
+（SP 3.13）；**顺序违反状态机时给出可行动错误**（SP 3.70），不会静默续跑。
+
+```bash
+# 创建 DRAFT 验证运行并返回 run_id 与状态（SP 3.69）
+harbor-cli validation run --config examples/configs/validation/hk_validation.yaml
+
+# 冻结数据 / 进入调参 / 锁定测试集后的最终评估（SP 3.70）
+harbor-cli validation freeze <run-id>
+harbor-cli validation tune <run-id>
+harbor-cli validation evaluate <run-id>
+```
+
+### 报告导出
+
+```bash
+# 查询运行状态视图（SP 3.71）
+harbor-cli validation show <run-id>
+
+# JSON（默认） / CSV / HTML 研究报告（SP 3.71；SP 3.68 渲染，显著展示研究性质）
+harbor-cli validation report <run-id> --format json
+harbor-cli validation report <run-id> --format csv
+harbor-cli validation report <run-id> --format html
+```
+
+### 重放与一致性
+
+- 固定数据清单（`dataset_fingerprint`）、冻结配置（`config_hash`）、代码版本与随机种子
+  → 参数试验、排名、选择与拟合快照完全一致（SP 3.28），OOS 与压力产物可重放
+  （SP 3.46 / 3.63）。
+- 结论只能为 `QUALIFIED` / `NOT_QUALIFIED` / `INCONCLUSIVE`（SP 3.58）；报告含结论指纹、
+  测试集版本、数据集指纹与审计事件（SP 3.66–3.68）。
+
+### 未通过不等于可调参重测
+
+验证工作流最关键的纪律：
+
+- **`NOT_QUALIFIED` / `INCONCLUSIVE` 不等于“调参后重测即通过”**：一旦测试集已用于
+  最终评估，任何策略 / 参数 / 数据 / 代码的实质变化都要求新的测试集版本 + 新的验证运行
+  （SP 3.42 再访问政策），不得沿用已定稿保留集结论。
+- **INCONCLUSIVE 表示证据不足，不是通过**（SP 3.58 / 3.73）：缺失证据的维度按不足
+  处理，绝不静默视为通过；须补充证据后重新评估。
+- **参数搜索只用训练 + 验证数据**：测试集只能一次性解锁用于最终评估（SP 3.24 / 3.41），
+  禁止用测试期指标选参（SP 3.21）。
+
+---
+
 ## 📊 开发状态
 
 | MVP 阶段 | 状态 | 预计完成 |
 | :--- | :--- | :--- |
 | MVP 1：数据基础 | ✅ 已完成 | 2026年8月 |
 | MVP 2：研究回测 | ✅ 已完成 | 2026年8月 |
-| MVP 3：样本外验证 | 📋 规划中 | — |
+| MVP 3：样本外验证 | 📋 进行中 | 2026年8月 |
 | MVP 4：模拟盘闭环 | 📋 规划中 | — |
 | MVP 5：实盘评估 | 📋 规划中 | — |
 
 > MVP 1（数据基础）已完成：港股与美股数据的采集、标准化、质量校验、复权因子与权益计算均已落地并通过自动化测试。MVP 1 尚未提供可用于实盘交易的策略或基础设施。
 >
 > MVP 2（研究回测）已完成：可配置、可重放、无未来函数与幸存者偏差的季度调仓长仓回测引擎已落地，覆盖港股与美股各自的交易日、币种、成本、停牌、企业行动与跨市场汇率（SP 2.1–2.89）。回测只读研究数据并写入本地结果，不创建模拟盘或券商订单（SP 2.89）；结果仅用于研究，不构成投资建议，也不表示未来收益或回撤。验收记录见 [`docs/mvp2_acceptance_record.md`](docs/mvp2_acceptance_record.md)（SP 2.87）。
+>
+> MVP 3（样本外验证）进行中：样本外验证管线（冻结切分、参数搜索只用训练+验证、滚动 OOS、压力/覆盖门槛、结论 `QUALIFIED`/`NOT_QUALIFIED`/`INCONCLUSIVE` 可审计）与验证 CLI（`run`/`freeze`/`tune`/`evaluate`/`show`/`report`，SP 3.69–3.71）、示例验证配置（SP 3.72）与样本外方法与限制文档（SP 3.73）已落地。
 
 #### 进入 MVP 3（样本外验证）前仍需解决的数据与研究限制
 
