@@ -179,6 +179,7 @@ tests/test_candidate_selection.py
 tests/test_cli.py
 tests/test_concentration.py
 tests/test_conclusion_evidence.py
+tests/test_conclusion_honesty_suite.py
 tests/test_config.py
 tests/test_consistency_check.py
 tests/test_corporate_action_backtest.py
