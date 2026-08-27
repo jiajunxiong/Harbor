@@ -274,6 +274,7 @@ tests/test_oos_report.py
 tests/test_order_drafts.py
 tests/test_parameter_budget.py
 tests/test_parameter_constraints.py
+tests/test_parameter_governance_suite.py
 tests/test_parameter_neighborhood.py
 tests/test_parameter_selection_explanation.py
 tests/test_parameter_space.py
