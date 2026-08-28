@@ -302,6 +302,7 @@ tests/test_real_data_validation.py
 tests/test_rebalance_schedule.py
 tests/test_recalculation.py
 tests/test_reconciliation.py
+tests/test_release_boundary_review.py
 tests/test_replay_manifest.py
 tests/test_repositories.py
 tests/test_reproducible_backtest.py
