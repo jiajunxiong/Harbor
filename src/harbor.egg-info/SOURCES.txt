@@ -345,6 +345,7 @@ tests/test_validation_cli.py
 tests/test_validation_config.py
 tests/test_validation_config_loader.py
 tests/test_validation_domain.py
+tests/test_validation_performance_baseline.py
 tests/test_validation_repositories.py
 tests/test_validation_split.py
 tests/test_validation_state_machine.py
