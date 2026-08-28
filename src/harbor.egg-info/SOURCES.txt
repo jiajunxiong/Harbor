@@ -208,6 +208,7 @@ tests/test_dividend_checks.py
 tests/test_dividend_processing.py
 tests/test_docker_backtest_smoke.py
 tests/test_docker_smoke.py
+tests/test_docker_validation_smoke.py
 tests/test_drawdown_events.py
 tests/test_end_to_end_backtest.py
 tests/test_environment_attribution.py
