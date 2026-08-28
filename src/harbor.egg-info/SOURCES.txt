@@ -296,6 +296,7 @@ tests/test_readme_guide.py
 tests/test_readme_validation_guide.py
 tests/test_real_data_contract.py
 tests/test_real_data_oos_contract.py
+tests/test_real_data_validation.py
 tests/test_rebalance_schedule.py
 tests/test_recalculation.py
 tests/test_reconciliation.py
