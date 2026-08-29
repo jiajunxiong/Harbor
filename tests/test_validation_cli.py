@@ -38,6 +38,24 @@ ENVIRONMENT = {
 }
 
 
+class _FakeConnection:
+    """A minimal connection recording executed statements (SP 3.69)."""
+
+    def __init__(self) -> None:
+        self.executed: list[object] = []
+
+    def execute(self, statement: object) -> "_FakeResult":
+        self.executed.append(statement)
+        return _FakeResult()
+
+
+class _FakeResult:
+    """A fake statement result with one inserted row."""
+
+    def fetchall(self) -> list[tuple[object, ...]]:
+        return [("row",)]
+
+
 def _write_config(tmp: str, *, markets: str = "HK") -> str:
     """Write a minimal valid validation config file."""
     path = Path(tmp) / "validation.yaml"
@@ -67,6 +85,8 @@ class ValidationRunCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             config_path = _write_config(tmp)
             with (
+                patch.dict(os.environ, ENVIRONMENT, clear=True),
+                patch("harbor.cli.create_engine"),
                 patch("harbor.cli.run_validation_from_config", return_value=result) as run_mock,
             ):
                 with redirect_stdout(output), redirect_stderr(io.StringIO()):
@@ -84,6 +104,8 @@ class ValidationRunCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             config_path = _write_config(tmp)
             with (
+                patch.dict(os.environ, ENVIRONMENT, clear=True),
+                patch("harbor.cli.create_engine"),
                 patch(
                     "harbor.cli.run_validation_from_config",
                     side_effect=ValidationServiceError("split boundaries are reversed"),
@@ -105,6 +127,8 @@ class ValidationRunCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             missing = str(Path(tmp) / "missing.yaml")
             with (
+                patch.dict(os.environ, ENVIRONMENT, clear=True),
+                patch("harbor.cli.create_engine"),
                 patch(
                     "harbor.cli.run_validation_from_config",
                     side_effect=FileNotFoundError(missing),
@@ -119,20 +143,25 @@ class ValidationRunCliTests(unittest.TestCase):
 
 
 class ValidationRunServiceTests(unittest.TestCase):
-    """The service creates a DRAFT run from a real config (SP 3.69)."""
+    """The service creates a persisted DRAFT run from a real config (SP 3.69)."""
 
     def test_service_creates_draft_run_from_valid_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config_path = _write_config(tmp)
-            result = run_validation_from_config(config_path)
+            connection = _FakeConnection()
+            result = run_validation_from_config(config_path, connection)
             self.assertTrue(result.run_id)
             self.assertEqual(result.status, ValidationStatus.DRAFT)
+            # The DRAFT run AND its frozen split must be persisted so that
+            # ``freeze`` can read the run back and ``report`` can render the
+            # split diagram (SP 3.12 / SP 3.71).
+            self.assertEqual(len(connection.executed), 2)
 
     def test_service_returns_distinct_run_ids(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config_path = _write_config(tmp)
-            first = run_validation_from_config(config_path)
-            second = run_validation_from_config(config_path)
+            first = run_validation_from_config(config_path, _FakeConnection())
+            second = run_validation_from_config(config_path, _FakeConnection())
             self.assertNotEqual(first.run_id, second.run_id)
 
     def test_service_rejects_invalid_config(self) -> None:
@@ -146,15 +175,15 @@ class ValidationRunServiceTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with self.assertRaises(ValueError):
-                run_validation_from_config(str(path))
+                run_validation_from_config(str(path), _FakeConnection())
 
     def test_service_rejects_missing_file(self) -> None:
         with self.assertRaises((OSError, ValueError)):
-            run_validation_from_config("/no/such/validation.yaml")
+            run_validation_from_config("/no/such/validation.yaml", _FakeConnection())
 
 
 class ValidationRunCommandCliTests(unittest.TestCase):
-    """Verify the ``validation freeze / tune / evaluate`` surface (SP 3.70)."""
+    """Verify the ``validation freeze / tune / lock / evaluate`` surface (SP 3.70)."""
 
     def test_validation_freeze_prints_frozen_status(self) -> None:
         from harbor.cli import main
@@ -192,6 +221,25 @@ class ValidationRunCommandCliTests(unittest.TestCase):
         summary = json.loads(output.getvalue())
         self.assertEqual(summary, {"run_id": "run-x", "status": "TUNING"})
         self.assertEqual(command_mock.call_args.kwargs["command"], "tune")
+
+    def test_validation_lock_prints_test_locked_status(self) -> None:
+        from harbor.cli import main
+
+        result = ValidationCommandResult(run_id="run-l", status=ValidationStatus.TEST_LOCKED)
+        output = io.StringIO()
+        with (
+            patch.dict(os.environ, ENVIRONMENT, clear=True),
+            patch("harbor.cli.create_engine"),
+            patch("harbor.cli.run_validation_command", return_value=result) as command_mock,
+        ):
+            with redirect_stdout(output), redirect_stderr(io.StringIO()):
+                exit_code = main(["validation", "lock", "run-l"])
+
+        self.assertEqual(exit_code, 0)
+        summary = json.loads(output.getvalue())
+        self.assertEqual(summary, {"run_id": "run-l", "status": "TEST_LOCKED"})
+        self.assertEqual(command_mock.call_args.args[1], "run-l")
+        self.assertEqual(command_mock.call_args.kwargs["command"], "lock")
 
     def test_validation_evaluate_prints_evaluated_status(self) -> None:
         from harbor.cli import main
@@ -249,6 +297,14 @@ class AdvanceValidationTests(unittest.TestCase):
         result = advance_validation("run-1", ValidationStatus.DATA_FROZEN, command="tune")
         self.assertEqual(result.status, ValidationStatus.TUNING)
 
+    def test_lock_transitions_frozen_to_test_locked(self) -> None:
+        result = advance_validation("run-1", ValidationStatus.DATA_FROZEN, command="lock")
+        self.assertEqual(result.status, ValidationStatus.TEST_LOCKED)
+
+    def test_lock_transitions_tuning_to_test_locked(self) -> None:
+        result = advance_validation("run-1", ValidationStatus.TUNING, command="lock")
+        self.assertEqual(result.status, ValidationStatus.TEST_LOCKED)
+
     def test_evaluate_transitions_locked_to_evaluated(self) -> None:
         result = advance_validation("run-1", ValidationStatus.TEST_LOCKED, command="evaluate")
         self.assertEqual(result.status, ValidationStatus.EVALUATED)
@@ -270,6 +326,13 @@ class AdvanceValidationTests(unittest.TestCase):
             advance_validation("run-1", ValidationStatus.DRAFT, command="evaluate")
         message = str(context.exception)
         self.assertIn("'evaluate' is not allowed", message)
+        self.assertIn("DRAFT -> DATA_FROZEN", message)
+
+    def test_lock_on_draft_is_actionable_error(self) -> None:
+        with self.assertRaises(ValidationServiceError) as context:
+            advance_validation("run-1", ValidationStatus.DRAFT, command="lock")
+        message = str(context.exception)
+        self.assertIn("'lock' is not allowed", message)
         self.assertIn("DRAFT -> DATA_FROZEN", message)
 
     def test_unknown_command_is_error(self) -> None:

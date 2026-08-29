@@ -2,6 +2,7 @@
 
 import unittest
 from datetime import date, datetime, timezone
+from unittest.mock import patch
 
 from harbor.config import MarketTarget
 from harbor.core.interfaces import Capability
@@ -11,6 +12,7 @@ from harbor.infrastructure.data_providers.yfinance import (
     standardize_daily_quotes,
     standardize_dividends,
     standardize_financials,
+    standardize_securities,
     standardize_splits,
 )
 
@@ -51,6 +53,118 @@ class YFinanceProviderTests(unittest.TestCase):
 
         self.assertTrue(capabilities.supports(MarketTarget.US, Capability.DAILY_QUOTES))
         self.assertFalse(capabilities.supports(MarketTarget.HK, Capability.DAILY_QUOTES))
+
+
+class _FakeResponse:
+    """A fake urllib response whose ``read()`` returns the payload bytes."""
+
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
+    def read(self) -> bytes:
+        return self._payload
+
+
+_HSI_HTML = """\
+<html><body>
+<table>
+<tr><th>股份代號</th><th>名稱</th><th>流通系數（%）</th><th>比重（%）</th></tr>
+<tr><td></td><td>恆指成份股</td></tr>
+<tr><td></td><td>金融業（10隻成份股）</td></tr>
+<tr><td>00005</td><td>滙豐控股</td><td>100</td><td>8.00</td></tr>
+<tr><td>01299</td><td>友邦保險</td><td>100</td><td>5.24</td></tr>
+<tr><td>00939</td><td>建設銀行</td><td>40</td><td>4.97</td></tr>
+<tr><td>共</td><td>4.32%</td></tr>
+<tr><td>總</td><td>100%</td></tr>
+</table>
+</body></html>
+"""
+
+_SP500_HTML = """\
+<html><body>
+<table>
+<tr><th>Symbol</th><th>Security</th><th>GICS Sector</th><th>GICS Sub-Industry</th></tr>
+<tr><td>MMM</td><td>3M</td><td>Industrials</td><td>Industrial Conglomerates</td></tr>
+<tr><td>AOS</td><td>A. O. Smith</td><td>Industrials</td><td>Building Products</td></tr>
+<tr><td>BRK.B</td><td>Berkshire Hathaway</td><td>Financials</td><td>Diversified Financials</td></tr>
+</table>
+</body></html>
+"""
+
+
+class IndexConstituentsTests(unittest.TestCase):
+    """Verify the HSI / S&P 500 securities universe (Wikipedia)."""
+
+    def test_standardize_securities_maps_constituents(self) -> None:
+        rows = standardize_securities(
+            MarketTarget.US,
+            [
+                {"Symbol": "AAPL", "Name": "Apple Inc."},
+                {"Symbol": "BRK.B", "Name": "Berkshire Hathaway"},
+            ],
+        )
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["market"], "US")
+        self.assertEqual(rows[0]["symbol"], "AAPL")
+        self.assertEqual(rows[0]["name"], "Apple Inc.")
+        self.assertEqual(rows[0]["exchange"], "US")
+        self.assertIs(rows[0]["is_active"], True)
+        self.assertIsNone(rows[0]["delist_date"])
+        self.assertEqual(rows[1]["symbol"], "BRK.B")
+
+    def test_standardize_securities_skips_invalid_rows(self) -> None:
+        rows = standardize_securities(
+            MarketTarget.HK,
+            [
+                {"Symbol": "0700.HK", "Name": "Tencent"},
+                {"Symbol": "", "Name": "blank symbol"},
+                {"Symbol": "NO", "Name": ""},
+                {"Name": "missing symbol"},
+                {"Symbol": "X", "Name": 42},
+            ],
+        )
+        self.assertEqual([row["symbol"] for row in rows], ["0700.HK"])
+
+    def test_list_securities_fetches_hsi_constituents(self) -> None:
+        provider = HKYFinanceProvider()
+        with patch(
+            "harbor.infrastructure.data_providers.yfinance.urllib.request.urlopen"
+        ) as urlopen_mock:
+            urlopen_mock.return_value.__enter__.return_value = _FakeResponse(
+                _HSI_HTML.encode("utf-8")
+            )
+            rows = provider.list_securities(MarketTarget.HK)
+        # Five-digit HKEX codes are converted to four-digit yfinance symbols,
+        # and the section-header / totals rows are filtered out.
+        self.assertEqual([row["symbol"] for row in rows], ["0005.HK", "1299.HK", "0939.HK"])
+        self.assertEqual([row["name"] for row in rows], ["滙豐控股", "友邦保險", "建設銀行"])
+        self.assertTrue(all(row["market"] == "HK" for row in rows))
+        request = urlopen_mock.call_args.args[0]
+        self.assertIn("zh.wikipedia.org", request.full_url)
+
+    def test_list_securities_fetches_sp500_constituents(self) -> None:
+        provider = USYFinanceProvider()
+        with patch(
+            "harbor.infrastructure.data_providers.yfinance.urllib.request.urlopen"
+        ) as urlopen_mock:
+            urlopen_mock.return_value.__enter__.return_value = _FakeResponse(
+                _SP500_HTML.encode("utf-8")
+            )
+            rows = provider.list_securities(MarketTarget.US)
+        self.assertEqual([row["symbol"] for row in rows], ["MMM", "AOS", "BRK.B"])
+        self.assertEqual([row["name"] for row in rows], ["3M", "A. O. Smith", "Berkshire Hathaway"])
+        request = urlopen_mock.call_args.args[0]
+        self.assertIn("en.wikipedia.org", request.full_url)
+        self.assertIn("List_of_S%26P_500_companies", request.full_url)
+
+    def test_list_securities_network_failure_raises_valueerror(self) -> None:
+        provider = USYFinanceProvider()
+        with patch(
+            "harbor.infrastructure.data_providers.yfinance.urllib.request.urlopen",
+            side_effect=OSError("connection refused"),
+        ):
+            with self.assertRaises(ValueError):
+                provider.list_securities(MarketTarget.US)
 
 
 class DailyQuoteStandardizationTests(unittest.TestCase):

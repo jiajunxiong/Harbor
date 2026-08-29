@@ -41,6 +41,7 @@ class ReadmeValidationUsageGuideTests(unittest.TestCase):
             "validation run",
             "validation freeze",
             "validation tune",
+            "validation lock",
             "validation evaluate",
             "validation show",
             "validation report",

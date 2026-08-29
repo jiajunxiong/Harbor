@@ -11,11 +11,10 @@ test-set lock the run completes evaluation and the report is exported
 (``show`` / ``report --format json``). Skipped when the Docker CLI or compose
 plugin is unavailable.
 
-The CLI intentionally exposes no ``lock`` subcommand (the test-set lock is an
-SP 3.13 state-machine step; SP 3.69–3.71 expose run/freeze/tune/evaluate/
-show/report), so the smoke test advances the run to TEST_LOCKED through the SP
-3.12 ValidationRepository and persists the frozen split artifact — simulating
-the lock step — before completing the final evaluation and report export.
+The CLI exposes the full state chain — ``run`` (DRAFT, persisted with its
+frozen split), ``freeze`` (DATA_FROZEN), ``tune`` (TUNING), ``lock``
+(TEST_LOCKED) and ``evaluate`` (EVALUATED) — and ``show`` / ``report``
+(SP 3.69–3.71); the smoke test exercises each command through the real CLI.
 """
 
 import io
@@ -29,15 +28,10 @@ import unittest
 import uuid
 from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
-from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from sqlalchemy import create_engine
-
 from harbor.cli import main
-from harbor.core.validation_domain import ValidationStatus
-from harbor.storage.validation_repositories import ValidationRepository
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _POSTGRES_PORT = "5436"
@@ -175,9 +169,6 @@ class DockerValidationSmokeTests(unittest.TestCase):
                 run = json.loads(run_output)
                 run_id = run["run_id"]
                 self.assertEqual(run["status"], "DRAFT")
-                # The CLI run subcommand is DB-free (SP 3.69); an orchestrator
-                # persists the DRAFT run before the DB-backed freeze command.
-                self._persist_run(database_url, config_path, run_id)
 
             frozen = json.loads(self._cli(cli_env, ["validation", "freeze", run_id]))
             self.assertEqual(frozen["status"], "DATA_FROZEN")
@@ -192,10 +183,8 @@ class DockerValidationSmokeTests(unittest.TestCase):
             self.assertIn("TEST_LOCKED", stderr)
 
             # 测试集锁定 (test-set lock, SP 3.13) + 最终评估 (final evaluation).
-            # The CLI exposes no lock subcommand, so the smoke advances the run
-            # to TEST_LOCKED through the SP 3.12 repository and persists the
-            # frozen split artifact, then completes the evaluation via the CLI.
-            self._lock_test_set(database_url, run_id)
+            locked = json.loads(self._cli(cli_env, ["validation", "lock", run_id]))
+            self.assertEqual(locked["status"], "TEST_LOCKED")
 
             evaluated = json.loads(self._cli(cli_env, ["validation", "evaluate", run_id]))
             self.assertEqual(evaluated["status"], "EVALUATED")
@@ -204,6 +193,7 @@ class DockerValidationSmokeTests(unittest.TestCase):
             show = json.loads(self._cli(cli_env, ["validation", "show", run_id]))
             self.assertEqual(show["run_id"], run_id)
             self.assertEqual(show["status"], "EVALUATED")
+            self.assertEqual(show["split"]["train_start"], "2024-01-01")
 
             report = json.loads(
                 self._cli(cli_env, ["validation", "report", run_id, "--format", "json"])
@@ -211,44 +201,6 @@ class DockerValidationSmokeTests(unittest.TestCase):
             self.assertEqual(report["run"]["run_id"], run_id)
         finally:
             compose("down", "-v")
-
-    def _persist_run(self, database_url: str, config_path: Path, run_id: str) -> None:
-        """Persist the DRAFT run through the SP 3.12 repository (SP 3.69/3.70)."""
-        from harbor.core.validation_config_loader import config_hash, load_validation_config
-
-        config = load_validation_config(config_path)
-        engine = create_engine(database_url)
-        try:
-            with engine.begin() as connection:
-                ValidationRepository(connection).create_run(
-                    run_id=run_id,
-                    config_hash=config_hash(config),
-                    config_snapshot=config.model_dump(mode="json"),
-                    code_version=config.code_version,
-                    created_at=datetime.now(timezone.utc),
-                    status=ValidationStatus.DRAFT.value,
-                )
-        finally:
-            engine.dispose()
-
-    def _lock_test_set(self, database_url: str, run_id: str) -> None:
-        """Advance a run to TEST_LOCKED and persist its frozen split (SP 3.12)."""
-        engine = create_engine(database_url)
-        with engine.begin() as connection:
-            repository = ValidationRepository(connection)
-            repository.update_run(run_id=run_id, status=ValidationStatus.TEST_LOCKED.value)
-            repository.upsert_split(
-                run_id,
-                {
-                    "split_hash": "split-hash",
-                    "train_start": date(2024, 1, 1),
-                    "train_end": date(2024, 1, 2),
-                    "validation_start": date(2024, 1, 3),
-                    "validation_end": date(2024, 1, 4),
-                    "test_start": date(2024, 1, 5),
-                    "test_end": date(2024, 1, 8),
-                },
-            )
 
     def _wait_for_postgres(self, compose: Callable[..., subprocess.CompletedProcess[str]]) -> bool:
         deadline = time.time() + 120

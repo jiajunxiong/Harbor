@@ -290,16 +290,32 @@ def build_universe(
     """Assemble a :class:`MockUniverse` from the storage reader (SP 2.51).
 
     Quotes, dividends and corporate actions are read for every symbol of each
-    configured market's stock pool on the configuration start date; FX rates
-    and the per-rebalance selection snapshots are supplied by the caller.
+    configured market's stock pool on the configuration start date, plus every
+    symbol selected on any rebalance day. A symbol that lists after the start
+    date (e.g. a later IPO) is not in the start-date pool but can be selected
+    on later rebalance days (SP 2.67 pool_selections applies list/delist
+    windows per day), so its data is loaded from the selection snapshots as
+    well. FX rates and the per-rebalance selection snapshots are supplied by
+    the caller.
     """
     quotes: dict[tuple[Market, str], dict[date, DailyQuote]] = {}
     dividends: dict[tuple[Market, str], tuple[Dividend, ...]] = {}
     corporate_actions: dict[tuple[Market, str], tuple[EntitlementEvent, ...]] = {}
+
+    # The universe must cover every symbol the runner can ever select: the
+    # start-date pool plus any symbol selected on a later rebalance day.
+    symbols_by_market: dict[Market, set[str]] = {}
     for quota in config.market_quotas:
         market = quota.market
         pool = reader.stock_pool(market, config.start_date, historical_known=True)
-        for symbol in pool.symbols:
+        symbols_by_market.setdefault(market, set()).update(pool.symbols)
+    if selections:
+        for (market, _day), symbols in selections.items():
+            symbols_by_market.setdefault(market, set()).update(symbols)
+
+    for quota in config.market_quotas:
+        market = quota.market
+        for symbol in sorted(symbols_by_market.get(market, ())):
             quotes[(market, symbol)] = {
                 quote.day: quote
                 for quote in reader.daily_quotes(market, symbol, config.start_date, config.end_date)

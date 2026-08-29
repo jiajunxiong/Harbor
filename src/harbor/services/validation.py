@@ -27,6 +27,7 @@ state machine, the SP 3.12 storage repository and the SP 3.66–3.68 report
 modules, keeping the CLI command thin and free of business logic.
 """
 
+import hashlib
 import json
 import uuid
 from collections.abc import Mapping, Sequence
@@ -39,8 +40,8 @@ from sqlalchemy.engine import Connection
 
 from harbor.core.oos_csv import export_oos_csvs
 from harbor.core.oos_report import render_oos_report
-from harbor.core.validation_config_loader import load_validation_config
-from harbor.core.validation_domain import ValidationStatus
+from harbor.core.validation_config_loader import config_hash, load_validation_config
+from harbor.core.validation_domain import EvaluationSplit, ValidationStatus
 from harbor.core.validation_state_machine import (
     ValidationRunState,
     ValidationStateError,
@@ -61,22 +62,75 @@ class ValidationCommandResult:
     status: ValidationStatus
 
 
-def run_validation_from_config(config_path: str | Path) -> ValidationCommandResult:
-    """Create a DRAFT validation run from a config file (SP 3.69).
+def _split_hash(split: EvaluationSplit) -> str:
+    """A stable SHA-256 over the frozen split boundaries (SP 3.12).
+
+    The digest covers the six boundary dates of the SP 3.4 ``EvaluationSplit``
+    so two equal splits hash identically independent of key order, and the
+    value is recorded in ``validation_splits.split_hash``.
+    """
+    payload = json.dumps(
+        {
+            "train_start": split.train_start.isoformat(),
+            "train_end": split.train_end.isoformat(),
+            "validation_start": split.validation_start.isoformat(),
+            "validation_end": split.validation_end.isoformat(),
+            "test_start": split.test_start.isoformat(),
+            "test_end": split.test_end.isoformat(),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def run_validation_from_config(
+    config_path: str | Path,
+    connection: Connection,
+) -> ValidationCommandResult:
+    """Create a persisted DRAFT validation run from a config file (SP 3.69).
 
     Loads and validates the SP 3.3 validation config — a missing file, an
     unreadable file or an invalid configuration raises ``ValueError`` — then
-    assigns a new run id and creates the SP 3.13 DRAFT state.
+    assigns a new run id, creates the SP 3.13 DRAFT state and persists the
+    master row via the SP 3.12 repository. The run id is therefore usable by
+    the later ``freeze`` / ``tune`` / ``evaluate`` / ``show`` / ``report``
+    commands, which read the run back from the database (SP 3.70).
 
     Args:
         config_path: Path to the YAML/JSON validation configuration.
+        connection: The database connection used to persist the run.
 
     Returns:
         The new run id and its DRAFT status.
     """
-    load_validation_config(config_path)
+    config = load_validation_config(config_path)
+    repository = ValidationRepository(connection)
     run_id = uuid.uuid4().hex
     state = validation_initial_state(run_id)
+    repository.create_run(
+        run_id=run_id,
+        config_hash=config_hash(config),
+        config_snapshot=config.model_dump(mode="json"),
+        code_version=config.code_version,
+        created_at=datetime.now(timezone.utc),
+        status=ValidationStatus.DRAFT.value,
+    )
+    # Persist the frozen split (SP 3.12) so ``show`` and ``report`` can render
+    # the split diagram; the split is immutable per config and written once.
+    split = config.split.to_evaluation_split()
+    repository.upsert_split(
+        validation_run_id=run_id,
+        values={
+            "split_hash": _split_hash(split),
+            "train_start": split.train_start,
+            "train_end": split.train_end,
+            "validation_start": split.validation_start,
+            "validation_end": split.validation_end,
+            "test_start": split.test_start,
+            "test_end": split.test_end,
+        },
+    )
     return ValidationCommandResult(run_id=state.run_id, status=state.status)
 
 
@@ -88,10 +142,11 @@ def advance_validation(
 ) -> ValidationCommandResult:
     """Apply one state-machine command to a run's current status (SP 3.70).
 
-    ``freeze`` (DRAFT -> DATA_FROZEN), ``tune`` (DATA_FROZEN -> TUNING) and
-    ``evaluate`` (TEST_LOCKED -> EVALUATED) are applied through the SP 3.13
-    state machine; a command that violates the state machine raises an
-    actionable error that names the required order.
+    ``freeze`` (DRAFT -> DATA_FROZEN), ``tune`` (DATA_FROZEN -> TUNING),
+    ``lock`` (DATA_FROZEN/TUNING -> TEST_LOCKED) and ``evaluate``
+    (TEST_LOCKED -> EVALUATED) are applied through the SP 3.13 state machine;
+    a command that violates the state machine raises an actionable error that
+    names the required order.
 
     Raises:
         ValidationServiceError: If ``command`` is unknown or is not an
@@ -103,6 +158,8 @@ def advance_validation(
             state = state.freeze()
         elif command == "tune":
             state = state.tune()
+        elif command == "lock":
+            state = state.lock_test_set()
         elif command == "evaluate":
             state = state.evaluate()
         else:

@@ -240,12 +240,19 @@ harbor-cli fetch all --market HK
 harbor-cli fetch all --market US
 
 # 仅采集标的列表
+# 港股 → 恒生指数 (HSI) 成分股（中文维基百科 恒生指数）；美股 → S&P 500 成分股（英文维基百科）
+# （yfinance provider 从维基百科解析，符号与 Yahoo Finance 一致）
 harbor-cli fetch securities --market HK
 harbor-cli fetch securities --market US
 
 # 采集单只标的的日线
 harbor-cli fetch daily --market HK --symbol 0700.HK
 harbor-cli fetch daily --market US --symbol AAPL
+
+# 批量采集某市场全部已注册标的的日线（HSI / S&P 500 成分股）
+harbor-cli fetch daily --market HK --all --start 2019-01-01 --end 2024-12-31
+harbor-cli fetch daily --market US --all --start 2019-01-01 --end 2024-12-31
+# 可选：--limit 仅抓前 N 只（冒烟测试），--delay 控制抓取间隔（防 yfinance 限流）
 ```
 
 ### 6. 数据质量报告
@@ -441,9 +448,10 @@ examples/configs/validation/
 # 创建 DRAFT 验证运行并返回 run_id 与状态（SP 3.69）
 harbor-cli validation run --config examples/configs/validation/hk_validation.yaml
 
-# 冻结数据 / 进入调参 / 锁定测试集后的最终评估（SP 3.70）
+# 冻结数据 / 进入调参 / 锁定测试集 / 最终评估（SP 3.70）
 harbor-cli validation freeze <run-id>
 harbor-cli validation tune <run-id>
+harbor-cli validation lock <run-id>
 harbor-cli validation evaluate <run-id>
 ```
 

@@ -37,8 +37,9 @@ _BACKTEST_STATUSES = frozenset(status.value for status in BacktestStatus)
 class BacktestRepository:
     """CRUD for the ``backtest_runs`` master table."""
 
-    def __init__(self, connection: Connection) -> None:
+    def __init__(self, connection: Connection, batch_size: int = 1000) -> None:
         self._connection = connection
+        self._batch_size = batch_size
 
     @staticmethod
     def _validate_status(status: str) -> str:
@@ -191,12 +192,25 @@ class BacktestRepository:
         run_id: str,
         rows: Sequence[Mapping[str, Any]],
     ) -> int:
-        """Execute an append-only insert of result rows and return the row count."""
-        statement = self._insert_results_statement(model, run_id, rows)
-        if statement is None:
+        """Execute an append-only insert of result rows and return the row count.
+
+        Rows are written in bounded batches so that large runs (e.g. a US
+        backtest that fills tens of thousands of orders) never build a single
+        statement with more bound parameters than PostgreSQL allows (65535 per
+        statement). Every batch is tagged with ``run_id`` exactly like the
+        single-shot path so all artifacts stay traceable to the run (SP 2.7).
+        """
+        if not rows:
             return 0
-        result = self._connection.execute(statement)
-        return result.rowcount or 0
+        table = cast(Table, model.__table__)
+        total = 0
+        for start in range(0, len(rows), self._batch_size):
+            chunk = rows[start : start + self._batch_size]
+            values = [dict(row, backtest_run_id=run_id) for row in chunk]
+            statement = table.insert().values(values)
+            result = self._connection.execute(statement)
+            total += result.rowcount or 0
+        return total
 
     def insert_net_values(self, run_id: str, rows: Sequence[Mapping[str, Any]]) -> int:
         """Record daily net-value snapshots for a run."""

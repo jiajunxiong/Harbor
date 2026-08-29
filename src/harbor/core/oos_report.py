@@ -115,6 +115,11 @@ def _header_section(data: dict[str, Any]) -> str:
 
 def _split_section(split: Mapping[str, Any]) -> str:
     """The split diagram (切分图) and interval table."""
+    if not split:
+        return (
+            '<section id="split"><h2>切分 (Split)</h2>'
+            '<p class="note">未记录冻结切分 (no frozen split recorded).</p></section>'
+        )
     train_start = split["train_start"]
     train_end = split["train_end"]
     validation_start = split["validation_start"]

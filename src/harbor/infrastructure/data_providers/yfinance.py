@@ -2,8 +2,11 @@
 
 import importlib
 import math
-from collections.abc import Mapping, Sequence
+import urllib.parse
+import urllib.request
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime
+from html.parser import HTMLParser
 from typing import Any, cast
 
 from harbor.config import MarketTarget
@@ -11,6 +14,16 @@ from harbor.core.interfaces import Capability, MarketDataProvider, ProviderCapab
 from harbor.core.market_registry import get_market_config
 
 _ALL_CAPABILITIES = frozenset(Capability)
+
+# The current constituents of the Hang Seng Index (HSI) and the S&P 500 are
+# parsed from their Wikipedia articles. Their symbols are consistent with
+# Yahoo Finance, so they map directly onto the yfinance ticker forms used by
+# ``fetch_daily_quotes``.
+_WIKIPEDIA_USER_AGENT = "Mozilla/5.0 (Harbor research data tool)"
+_CONSTITUENTS_EXCHANGE: dict[MarketTarget, str] = {
+    MarketTarget.HK: "HKEX",
+    MarketTarget.US: "US",
+}
 
 
 def _column_value(
@@ -213,6 +226,151 @@ def standardize_financials(
     ]
 
 
+def _hsi_symbol(code: str) -> str | None:
+    """Convert a 5-digit HKEX code to the 4-digit yfinance form (00005 -> 0005.HK)."""
+    return f"{int(code):04d}.HK" if code.isdigit() else None
+
+
+def _us_symbol(code: str) -> str | None:
+    """Return a US ticker as-is, trimmed and uppercased."""
+    cleaned = code.strip().upper()
+    return cleaned if cleaned else None
+
+
+class _WikipediaConstituentParser(HTMLParser):
+    """Extract index constituents from a Wikipedia table.
+
+    The parser keeps only the first table whose header row contains
+    ``header_marker`` and converts each data row's first cell via
+    ``convert_symbol`` (returning ``None`` for rows that are not real
+    constituents, e.g. section headers or totals); the second cell becomes the
+    display name.
+    """
+
+    def __init__(
+        self,
+        header_marker: str,
+        convert_symbol: Callable[[str], str | None],
+    ) -> None:
+        super().__init__()
+        self._header_marker = header_marker
+        self._convert_symbol = convert_symbol
+        self._in_table = False
+        self._is_target = False
+        self._row: list[str] | None = None
+        self._cell: str | None = None
+        self._row_index = 0
+        self.constituents: list[dict[str, str]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "table":
+            self._in_table = True
+            self._is_target = False
+            self._row_index = 0
+        elif tag == "tr" and self._in_table:
+            self._row = []
+        elif tag in ("td", "th") and self._row is not None:
+            self._cell = ""
+
+    def handle_data(self, data: str) -> None:
+        if self._cell is not None:
+            self._cell += data
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in ("td", "th"):
+            if self._row is not None and self._cell is not None:
+                self._row.append(self._cell.strip())
+            self._cell = None
+        elif tag == "tr":
+            if self._row is not None and self._in_table:
+                self._row_index += 1
+                row = self._row
+                self._row = None
+                if self._row_index == 1:
+                    self._is_target = any(self._header_marker in cell for cell in row)
+                elif self._is_target:
+                    self._consume(row)
+        elif tag == "table":
+            self._in_table = False
+
+    def _consume(self, row: Sequence[str]) -> None:
+        if len(row) >= 2:
+            symbol = self._convert_symbol(row[0])
+            name = row[1]
+            if symbol and name:
+                self.constituents.append({"Symbol": symbol, "Name": name})
+
+
+def _fetch_wikipedia_constituents(
+    url: str,
+    header_marker: str,
+    convert_symbol: Callable[[str], str | None],
+) -> Sequence[Mapping[str, Any]]:
+    """Fetch a Wikipedia page and parse its index-constituents table.
+
+    Raises:
+        ValueError: If the page cannot be fetched.
+    """
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": _WIKIPEDIA_USER_AGENT},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            html = response.read().decode("utf-8")
+    except OSError as error:
+        raise ValueError(f"Failed to fetch index constituents from {url}: {error}") from error
+    parser = _WikipediaConstituentParser(header_marker, convert_symbol)
+    parser.feed(html)
+    return parser.constituents
+
+
+def _fetch_hsi_wikipedia() -> Sequence[Mapping[str, Any]]:
+    """Parse the current HSI constituents from the Chinese Wikipedia article."""
+    url = "https://zh.wikipedia.org/zh/" + urllib.parse.quote("恒生指数")
+    return _fetch_wikipedia_constituents(url, "股份代號", _hsi_symbol)
+
+
+def _fetch_sp500_wikipedia() -> Sequence[Mapping[str, Any]]:
+    """Parse the current S&P 500 constituents from the English Wikipedia article."""
+    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+    return _fetch_wikipedia_constituents(url, "Symbol", _us_symbol)
+
+
+def standardize_securities(
+    market: MarketTarget,
+    constituents: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Normalize index constituents into securities rows (SP 1.33).
+
+    The constituents carry a Yahoo-consistent symbol and a display name but no
+    exchange or listing date; the exchange is a market-level default and
+    ``list_date`` is a research placeholder (2000-01-03) so current index
+    members are active throughout a backtest. This is a survivorship-bias
+    limitation surfaced by the stock-pool evaluation (SP 2.10 / SP 2.30), not
+    a silent assumption.
+    """
+    exchange = _CONSTITUENTS_EXCHANGE[market]
+    rows: list[dict[str, Any]] = []
+    for item in constituents:
+        symbol = item.get("Symbol")
+        name = item.get("Name")
+        if not isinstance(symbol, str) or not symbol or not isinstance(name, str) or not name:
+            continue
+        rows.append(
+            {
+                "market": market.value,
+                "symbol": symbol,
+                "name": name,
+                "exchange": exchange,
+                "list_date": date(2000, 1, 3),
+                "delist_date": None,
+                "is_active": True,
+            }
+        )
+    return rows
+
+
 class YFinanceProvider(MarketDataProvider):
     """Base class for yfinance-backed providers.
 
@@ -321,6 +479,17 @@ class HKYFinanceProvider(YFinanceProvider):
         digits = symbol.removesuffix(".HK").strip()
         return f"{int(digits):04d}.HK"
 
+    def list_securities(self, market: MarketTarget) -> Sequence[Mapping[str, Any]]:
+        """Return the current Hang Seng Index constituents (from Wikipedia).
+
+        The Chinese Wikipedia article on the Hang Seng Index (恒生指数) is
+        parsed for its ``股份代號 | 名稱`` table; five-digit HKEX codes are
+        converted to the four-digit yfinance ticker forms (``00005`` ->
+        ``0005.HK``).
+        """
+        self._require_market(market)
+        return standardize_securities(market, _fetch_hsi_wikipedia())
+
 
 class USYFinanceProvider(YFinanceProvider):
     """yfinance-backed provider for the United States market."""
@@ -332,3 +501,12 @@ class USYFinanceProvider(YFinanceProvider):
     def _normalize_symbol(self, symbol: str) -> str:
         """Return the ticker as given, trimmed and uppercased."""
         return symbol.strip().upper()
+
+    def list_securities(self, market: MarketTarget) -> Sequence[Mapping[str, Any]]:
+        """Return the current S&P 500 constituents (from Wikipedia).
+
+        The English Wikipedia "List of S&P 500 companies" article is parsed
+        for its ``Symbol | Security`` table; tickers are used as-is.
+        """
+        self._require_market(market)
+        return standardize_securities(market, _fetch_sp500_wikipedia())

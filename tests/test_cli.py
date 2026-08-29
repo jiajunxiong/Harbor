@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from harbor import __version__
 from harbor.cli import main
+from harbor.config import MarketTarget
 
 
 class RecordingRepository:
@@ -237,6 +238,69 @@ class FetchDailyCliTests(unittest.TestCase):
         market, rows = fake_repository.daily_quotes_calls[0]
         self.assertEqual(market, "US")
         self.assertEqual(rows[0]["symbol"], "AAPL")
+
+    def test_fetch_daily_all_prints_summary(self) -> None:
+        output = io.StringIO()
+        summary = {
+            "market": "HK",
+            "provider": "yfinance",
+            "symbols": 88,
+            "count": 258,
+            "fetched": 86,
+            "empty": 2,
+            "failed": 0,
+            "failures": {},
+        }
+        with (
+            patch.dict(os.environ, self.ENVIRONMENT, clear=True),
+            patch("harbor.cli.create_engine"),
+            patch("harbor.cli._fetch_daily_all", return_value=summary) as fetch_all_mock,
+        ):
+            with redirect_stdout(output), redirect_stderr(io.StringIO()):
+                exit_code = main(
+                    [
+                        "fetch",
+                        "daily",
+                        "--market",
+                        "HK",
+                        "--all",
+                        "--limit",
+                        "3",
+                        "--start",
+                        "2026-01-05",
+                        "--end",
+                        "2026-01-09",
+                    ]
+                )
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(json.loads(output.getvalue()), summary)
+        self.assertEqual(fetch_all_mock.call_args.args[0], MarketTarget.HK)
+        self.assertEqual(fetch_all_mock.call_args.args[4], 3)
+        self.assertEqual(fetch_all_mock.call_args.args[5], 0.2)
+
+    def test_fetch_daily_requires_symbol_or_all(self) -> None:
+        stderr = io.StringIO()
+        with (
+            patch.dict(os.environ, self.ENVIRONMENT, clear=True),
+            patch("harbor.cli.create_engine"),
+        ):
+            with self.assertRaises(SystemExit) as exit_context:
+                with redirect_stdout(io.StringIO()), redirect_stderr(stderr):
+                    main(["fetch", "daily", "--market", "HK"])
+        self.assertEqual(exit_context.exception.code, 2)
+        self.assertIn("--all or --symbol is required", stderr.getvalue())
+
+    def test_fetch_daily_symbol_and_all_conflict(self) -> None:
+        stderr = io.StringIO()
+        with (
+            patch.dict(os.environ, self.ENVIRONMENT, clear=True),
+            patch("harbor.cli.create_engine"),
+        ):
+            with self.assertRaises(SystemExit) as exit_context:
+                with redirect_stdout(io.StringIO()), redirect_stderr(stderr):
+                    main(["fetch", "daily", "--market", "HK", "--symbol", "0700.HK", "--all"])
+        self.assertEqual(exit_context.exception.code, 2)
+        self.assertIn("mutually exclusive", stderr.getvalue())
 
 
 class FetchAllCliTests(unittest.TestCase):

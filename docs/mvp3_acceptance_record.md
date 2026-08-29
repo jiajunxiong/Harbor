@@ -25,6 +25,7 @@ harbor-cli fetch daily --market HK --symbol 0001.HK --start 2024-01-01 --end 202
 harbor-cli validation run --config examples/configs/validation/hk_validation.yaml
 harbor-cli validation freeze <run-id>
 harbor-cli validation tune <run-id>
+harbor-cli validation lock <run-id>
 harbor-cli validation evaluate <run-id>
 
 # 结果查询 + 报告导出（SP 3.71）

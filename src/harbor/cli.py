@@ -3,6 +3,7 @@
 import argparse
 import json
 import sys
+import time
 import uuid
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -60,11 +61,32 @@ def build_parser() -> argparse.ArgumentParser:
     securities_parser.add_argument(
         "--market", type=MarketTarget, required=True, help="Market to fetch (HK or US)."
     )
-    daily_parser = fetch_subparsers.add_parser("daily", help="Fetch daily quotes for a symbol.")
+    daily_parser = fetch_subparsers.add_parser(
+        "daily", help="Fetch daily quotes for a symbol, or for all symbols with --all."
+    )
     daily_parser.add_argument(
         "--market", type=MarketTarget, required=True, help="Market to fetch (HK or US)."
     )
-    daily_parser.add_argument("--symbol", required=True, help="Security symbol.")
+    daily_parser.add_argument(
+        "--symbol", required=False, help="Security symbol (required unless --all is given)."
+    )
+    daily_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Fetch daily quotes for every registered security in the market.",
+    )
+    daily_parser.add_argument(
+        "--delay",
+        type=float,
+        default=0.2,
+        help="Seconds between symbols when --all is used (rate limiting).",
+    )
+    daily_parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="Max symbols to fetch when --all is used (0 = all).",
+    )
     daily_parser.add_argument(
         "--start",
         type=date.fromisoformat,
@@ -180,6 +202,10 @@ def build_parser() -> argparse.ArgumentParser:
         "tune", help="Begin parameter tuning (DATA_FROZEN -> TUNING)."
     )
     tune_parser.add_argument("run_id", help="The validation run id.")
+    lock_parser = validation_subparsers.add_parser(
+        "lock", help="Lock the independent test set (DATA_FROZEN/TUNING -> TEST_LOCKED)."
+    )
+    lock_parser.add_argument("run_id", help="The validation run id.")
     evaluate_parser = validation_subparsers.add_parser(
         "evaluate", help="Evaluate the independent holdout (TEST_LOCKED -> EVALUATED)."
     )
@@ -239,17 +265,34 @@ def _show_fetch(parser: argparse.ArgumentParser, arguments: argparse.Namespace) 
         parser.error(f"Invalid configuration: {error}")
         return 2
     if arguments.fetch_command in ("securities", "daily", "all"):
+        if arguments.fetch_command == "daily":
+            if arguments.all and arguments.symbol:
+                parser.error("--symbol and --all are mutually exclusive")
+                return 2
+            if not arguments.all and not arguments.symbol:
+                parser.error("--all or --symbol is required for fetch daily")
+                return 2
         try:
             if arguments.fetch_command == "securities":
                 summary = _fetch_securities(arguments.market, settings)
             elif arguments.fetch_command == "daily":
-                summary = _fetch_daily(
-                    arguments.market,
-                    settings,
-                    arguments.symbol,
-                    arguments.start,
-                    arguments.end,
-                )
+                if arguments.all:
+                    summary = _fetch_daily_all(
+                        arguments.market,
+                        settings,
+                        arguments.start,
+                        arguments.end,
+                        arguments.limit,
+                        arguments.delay,
+                    )
+                else:
+                    summary = _fetch_daily(
+                        arguments.market,
+                        settings,
+                        arguments.symbol,
+                        arguments.start,
+                        arguments.end,
+                    )
             else:
                 summary = _fetch_all(arguments.market, settings, arguments.start, arguments.end)
         except (NotImplementedError, ValueError) as error:
@@ -321,6 +364,69 @@ def _fetch_daily(
         "symbol": symbol,
         "provider": _provider_name(market, settings),
         "count": count,
+    }
+
+
+def _fetch_daily_all(
+    market: MarketTarget,
+    settings: Settings,
+    start: date | None,
+    end: date | None,
+    limit: int,
+    delay: float,
+) -> dict[str, object]:
+    """Fetch daily quotes for every registered security in a market.
+
+    Each symbol commits in its own transaction so a transient failure rolls
+    back only that symbol; per-symbol failures are collected in the summary
+    and never abort the batch. Progress is written to stderr so the JSON
+    summary on stdout stays machine-readable. The writes are idempotent
+    (``ON CONFLICT DO NOTHING``), so re-running is safe. ``limit`` caps the
+    number of symbols processed (0 = all).
+    """
+    range_end = end if end is not None else date.today()
+    range_start = start if start is not None else range_end - timedelta(days=365 * 5)
+    provider_name = _provider_name(market, settings)
+    engine = create_engine(settings.database_url)
+    provider = create_provider(market, provider_name)
+    with engine.connect() as connection:
+        repository = Repository(connection)
+        rows = connection.execute(repository.list_securities(market.value)).mappings()
+        symbols = [str(row["symbol"]) for row in rows]
+    if limit > 0:
+        symbols = symbols[:limit]
+    inserted = 0
+    counts: dict[str, int] = {}
+    failures: dict[str, str] = {}
+    for symbol in symbols:
+        try:
+            with engine.begin() as connection:
+                batch_repository = Repository(connection)
+                run_id = uuid.uuid4().hex
+                batch_repository.create_ingestion_run(
+                    market.value,
+                    run_id,
+                    provider_name,
+                    datetime.now(timezone.utc),
+                )
+                ingested = DailyQuoteIngestor(batch_repository, run_id=run_id).ingest(
+                    provider, market, symbol, range_start, range_end
+                )
+            counts[symbol] = ingested
+            inserted += ingested
+        except Exception as error:  # noqa: BLE001 - one bad symbol must not abort the batch
+            failures[symbol] = str(error)
+        print(f"  {symbol}: {counts.get(symbol, 'FAILED')}", file=sys.stderr, flush=True)
+        time.sleep(delay)
+    return {
+        "market": market.value,
+        "provider": provider_name,
+        "symbols": len(symbols),
+        "count": inserted,
+        "fetched": sum(1 for count in counts.values() if count > 0),
+        "empty": sum(1 for count in counts.values() if count == 0),
+        "failed": len(failures),
+        "failures": failures,
     }
 
 
@@ -550,6 +656,8 @@ def _show_validation(parser: argparse.ArgumentParser, arguments: argparse.Namesp
         return _show_validation_command(parser, arguments, command="freeze")
     if arguments.validation_command == "tune":
         return _show_validation_command(parser, arguments, command="tune")
+    if arguments.validation_command == "lock":
+        return _show_validation_command(parser, arguments, command="lock")
     if arguments.validation_command == "evaluate":
         return _show_validation_command(parser, arguments, command="evaluate")
     if arguments.validation_command == "show":
@@ -627,7 +735,17 @@ def _show_validation_command(
 def _show_validation_run(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
     """Create a DRAFT validation run and render its id and status (SP 3.69)."""
     try:
-        result = run_validation_from_config(config_path=arguments.config)
+        settings = Settings()  # type: ignore[call-arg]
+    except ValidationError as error:
+        parser.error(f"Invalid configuration: {error}")
+        return 2
+    try:
+        engine = create_engine(settings.database_url)
+        with engine.begin() as connection:
+            result = run_validation_from_config(
+                config_path=arguments.config,
+                connection=connection,
+            )
     except (OSError, ValueError) as error:
         parser.error(f"Validation run failed: {error}")
         return 2

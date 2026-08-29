@@ -27,8 +27,8 @@ market_quotas:
   - market: US
     target_count: 10
     weight: 0.5
-start_date: "2019-01-01"
-end_date: "2024-12-31"
+start_date: "2020-01-01"
+end_date: "2026-08-27"
 base_currency: HKD
 rebalance_frequency: quarterly
 initial_capital: 10000000

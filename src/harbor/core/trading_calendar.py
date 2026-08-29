@@ -123,6 +123,28 @@ _HK_HOLIDAYS_2019_2024: frozenset[date] = frozenset(
     }
 )
 
+#: Authoritative Hong Kong (HKEX) holidays, 2025 — weekday closures only.
+_HK_HOLIDAYS_2025: frozenset[date] = frozenset(
+    {
+        date(2025, 1, 1),  # New Year's Day
+        date(2025, 1, 29),  # Lunar New Year
+        date(2025, 1, 30),
+        date(2025, 1, 31),
+        date(2025, 4, 4),  # Ching Ming
+        date(2025, 4, 18),  # Good Friday
+        date(2025, 4, 21),  # Easter Monday
+        date(2025, 5, 1),  # Labour Day
+        date(2025, 5, 5),  # Buddha's Birthday
+        date(2025, 6, 2),  # Tuen Ng
+        date(2025, 7, 1),  # HKSAR Day
+        date(2025, 10, 1),  # National Day
+        date(2025, 10, 7),  # day after Mid-Autumn
+        date(2025, 10, 29),  # Chung Yeung
+        date(2025, 12, 25),  # Christmas
+        date(2025, 12, 26),  # Boxing Day
+    }
+)
+
 #: Illustrative Hong Kong holidays (2026). Research default only.
 _HK_HOLIDAYS_2026: frozenset[date] = frozenset(
     {
@@ -215,6 +237,22 @@ _US_HOLIDAYS_2019_2024: frozenset[date] = frozenset(
     }
 )
 
+#: Authoritative United States (NYSE) holidays, 2025 — weekday closures only.
+_US_HOLIDAYS_2025: frozenset[date] = frozenset(
+    {
+        date(2025, 1, 1),  # New Year's Day
+        date(2025, 1, 20),  # Martin Luther King Jr. Day
+        date(2025, 2, 17),  # Presidents' Day
+        date(2025, 4, 18),  # Good Friday
+        date(2025, 5, 26),  # Memorial Day
+        date(2025, 6, 19),  # Juneteenth
+        date(2025, 7, 4),  # Independence Day
+        date(2025, 9, 1),  # Labor Day
+        date(2025, 11, 27),  # Thanksgiving
+        date(2025, 12, 25),  # Christmas
+    }
+)
+
 #: Illustrative United States holidays (2026). Research default only.
 _US_HOLIDAYS_2026: frozenset[date] = frozenset(
     {
@@ -233,8 +271,8 @@ _US_HOLIDAYS_2026: frozenset[date] = frozenset(
 )
 
 DEFAULT_HOLIDAYS: Mapping[Market, frozenset[date]] = {
-    Market.HK: _HK_HOLIDAYS_2019_2024 | _HK_HOLIDAYS_2026,
-    Market.US: _US_HOLIDAYS_2019_2024 | _US_HOLIDAYS_2026,
+    Market.HK: _HK_HOLIDAYS_2019_2024 | _HK_HOLIDAYS_2025 | _HK_HOLIDAYS_2026,
+    Market.US: _US_HOLIDAYS_2019_2024 | _US_HOLIDAYS_2025 | _US_HOLIDAYS_2026,
 }
 
 
