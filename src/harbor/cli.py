@@ -5,12 +5,13 @@ import json
 import sys
 import time
 import uuid
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 
 from pydantic import ValidationError
 from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
 
 from harbor import __version__
 from harbor.config import MarketTarget, Settings
@@ -22,6 +23,7 @@ from harbor.core.ingestion import (
     SecuritiesIngestor,
 )
 from harbor.core.interfaces import Capability, MarketDataProvider
+from harbor.core.paper_domain import ApprovalDecision
 from harbor.core.quality_report import render_quality_csv, summarize_quality_issues
 from harbor.infrastructure.data_providers.factory import (
     create_provider,
@@ -34,6 +36,19 @@ from harbor.services.backtest import (
     resume_backtest_from_config,
     run_backtest_from_config,
     show_backtest,
+)
+from harbor.services.paper import (
+    PaperRepositoryStore,
+    paper_approve_order_command,
+    paper_init_command,
+    paper_order_list_command,
+    paper_order_show_command,
+    paper_reconcile_command,
+    paper_report_command,
+    paper_signal_command,
+    paper_start_command,
+    paper_status_command,
+    paper_stop_command,
 )
 from harbor.services.validation import (
     report_validation,
@@ -224,6 +239,103 @@ def build_parser() -> argparse.ArgumentParser:
         default="json",
         help="Report format; defaults to json.",
     )
+    paper_parser = subparsers.add_parser(
+        "paper", help="Create, run and reconcile local paper-trading loops."
+    )
+    paper_subparsers = paper_parser.add_subparsers(dest="paper_command", required=True)
+    init_parser = paper_subparsers.add_parser(
+        "init", help="Create a DRAFT paper run from a versioned paper config file."
+    )
+    init_parser.add_argument(
+        "--config", required=True, help="Path to the paper configuration (YAML/JSON)."
+    )
+    init_parser.add_argument(
+        "--code-version",
+        default=__version__,
+        help="Code version recorded with the run; defaults to the package version.",
+    )
+    init_parser.add_argument(
+        "--dataset-fingerprint",
+        required=True,
+        help="Dataset fingerprint recorded with the run (SP 4.9 replay identity).",
+    )
+    start_parser = paper_subparsers.add_parser(
+        "start", help="Approve and activate a paper run (DRAFT -> APPROVED -> ACTIVE)."
+    )
+    start_parser.add_argument("run_id", help="The paper run id.")
+    start_parser.add_argument(
+        "--approver", default="system", help="The approver recorded with the run approval."
+    )
+    stop_parser = paper_subparsers.add_parser("stop", help="Stop a paper run (terminal state).")
+    stop_parser.add_argument("run_id", help="The paper run id.")
+    status_parser = paper_subparsers.add_parser(
+        "status", help="Show a paper run's status and artifact counts."
+    )
+    status_parser.add_argument("run_id", help="The paper run id.")
+    signal_parser = paper_subparsers.add_parser(
+        "signal", help="Derive and persist paper orders from target weights (SP 4.85)."
+    )
+    signal_parser.add_argument("run_id", help="The paper run id.")
+    signal_parser.add_argument(
+        "--rebalance-date", type=date.fromisoformat, required=True, help="The rebalance date (ISO)."
+    )
+    signal_parser.add_argument(
+        "--target",
+        action="append",
+        required=True,
+        metavar="SYMBOL:WEIGHT",
+        help="A target weight (repeatable), e.g. 0001.HK:0.5.",
+    )
+    signal_parser.add_argument(
+        "--price",
+        action="append",
+        required=True,
+        metavar="SYMBOL:PRICE",
+        help="A reference price (repeatable), e.g. 0001.HK:50.0.",
+    )
+    signal_parser.add_argument(
+        "--source-run-id", default=None, help="The OOS research run that produced the signal."
+    )
+    order_parser = paper_subparsers.add_parser("order", help="Inspect a paper run's orders.")
+    order_subparsers = order_parser.add_subparsers(dest="order_command", required=True)
+    order_list_parser = order_subparsers.add_parser("list", help="List a paper run's orders.")
+    order_list_parser.add_argument("run_id", help="The paper run id.")
+    order_show_parser = order_subparsers.add_parser("show", help="Show a single paper order.")
+    order_show_parser.add_argument("run_id", help="The paper run id.")
+    order_show_parser.add_argument("order_id", help="The order id.")
+    approve_parser = paper_subparsers.add_parser(
+        "approve", help="Approve a paper order or run (records an auditable approval)."
+    )
+    approve_parser.add_argument("run_id", help="The paper run id.")
+    approve_parser.add_argument(
+        "--order-id", default=None, help="The order id (when approving an order)."
+    )
+    approve_parser.add_argument("--approver", required=True, help="The approver.")
+    approve_parser.add_argument("--reason", default=None, help="Optional approval reason.")
+    reject_parser = paper_subparsers.add_parser(
+        "reject", help="Reject a paper order (records an auditable rejection)."
+    )
+    reject_parser.add_argument("run_id", help="The paper run id.")
+    reject_parser.add_argument("--order-id", required=True, help="The order id.")
+    reject_parser.add_argument("--approver", required=True, help="The approver.")
+    reject_parser.add_argument("--reason", default=None, help="Optional rejection reason.")
+    reconcile_parser = paper_subparsers.add_parser(
+        "reconcile", help="Reconcile a paper run's account against its net value (SP 4.87)."
+    )
+    reconcile_parser.add_argument("run_id", help="The paper run id.")
+    reconcile_parser.add_argument(
+        "--as-of", type=date.fromisoformat, required=True, help="The reconciliation date (ISO)."
+    )
+    paper_report_parser = paper_subparsers.add_parser(
+        "report", help="Render a paper run's report as JSON, CSV or HTML."
+    )
+    paper_report_parser.add_argument("run_id", help="The paper run id.")
+    paper_report_parser.add_argument(
+        "--format",
+        choices=("json", "csv", "html"),
+        default="json",
+        help="Report format; defaults to json.",
+    )
     return parser
 
 
@@ -250,6 +362,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _show_backtest(parser, arguments)
     if arguments.command == "validation":
         return _show_validation(parser, arguments)
+    if arguments.command == "paper":
+        return _show_paper(parser, arguments)
     parser.error(f"Unsupported command: {arguments.command}")
     return 2
 
@@ -778,4 +892,261 @@ def _show_config(parser: argparse.ArgumentParser) -> int:
         "log_level": settings.log_level.value,
     }
     sys.stdout.write(f"{json.dumps(summary, sort_keys=True)}\n")
+    return 0
+
+
+def _paper_engine(parser: argparse.ArgumentParser) -> tuple[Engine | None, Settings | None]:
+    """Return a database engine and settings, or None on invalid configuration."""
+    try:
+        settings = Settings()  # type: ignore[call-arg]
+    except ValidationError as error:
+        parser.error(f"Invalid configuration: {error}")
+        return None, None
+    engine = create_engine(settings.database_url)
+    return engine, settings
+
+
+def _show_paper(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """Dispatch the paper subcommands (SP 4.84-4.87)."""
+    if arguments.paper_command == "init":
+        return _show_paper_init(parser, arguments)
+    if arguments.paper_command == "start":
+        return _show_paper_start(parser, arguments)
+    if arguments.paper_command == "stop":
+        return _show_paper_stop(parser, arguments)
+    if arguments.paper_command == "status":
+        return _show_paper_status(parser, arguments)
+    if arguments.paper_command == "signal":
+        return _show_paper_signal(parser, arguments)
+    if arguments.paper_command == "order":
+        return _show_paper_order(parser, arguments)
+    if arguments.paper_command == "approve":
+        return _show_paper_approve(parser, arguments)
+    if arguments.paper_command == "reject":
+        return _show_paper_reject(parser, arguments)
+    if arguments.paper_command == "reconcile":
+        return _show_paper_reconcile(parser, arguments)
+    if arguments.paper_command == "report":
+        return _show_paper_report(parser, arguments)
+    parser.error(f"Unsupported paper command: {arguments.paper_command}")
+    return 2
+
+
+def _show_paper_init(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """Create a DRAFT paper run (SP 4.84)."""
+    engine, _settings = _paper_engine(parser)
+    if engine is None:
+        return 2
+    try:
+        with engine.begin() as connection:
+            result = paper_init_command(
+                config_path=arguments.config,
+                store=PaperRepositoryStore(connection),
+                code_version=arguments.code_version,
+                dataset_fingerprint=arguments.dataset_fingerprint,
+            )
+    except (OSError, ValueError) as error:
+        parser.error(f"Paper init failed: {error}")
+        return 2
+    sys.stdout.write(f"{json.dumps(result.to_dict(), sort_keys=True)}\n")
+    return 0
+
+
+def _show_paper_start(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """Approve and activate a paper run (SP 4.84)."""
+    engine, _settings = _paper_engine(parser)
+    if engine is None:
+        return 2
+    try:
+        with engine.begin() as connection:
+            result = paper_start_command(
+                store=PaperRepositoryStore(connection),
+                run_id=arguments.run_id,
+                approver=arguments.approver,
+            )
+    except (OSError, ValueError) as error:
+        parser.error(f"Paper start failed: {error}")
+        return 2
+    sys.stdout.write(f"{json.dumps(result.to_dict(), sort_keys=True)}\n")
+    return 0
+
+
+def _show_paper_stop(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """Stop a paper run (SP 4.84)."""
+    engine, _settings = _paper_engine(parser)
+    if engine is None:
+        return 2
+    try:
+        with engine.begin() as connection:
+            result = paper_stop_command(
+                store=PaperRepositoryStore(connection), run_id=arguments.run_id
+            )
+    except (OSError, ValueError) as error:
+        parser.error(f"Paper stop failed: {error}")
+        return 2
+    sys.stdout.write(f"{json.dumps(result.to_dict(), sort_keys=True)}\n")
+    return 0
+
+
+def _show_paper_status(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """Show a paper run's status view (SP 4.84)."""
+    engine, _settings = _paper_engine(parser)
+    if engine is None:
+        return 2
+    try:
+        with engine.connect() as connection:
+            result = paper_status_command(
+                store=PaperRepositoryStore(connection), run_id=arguments.run_id
+            )
+    except (OSError, ValueError) as error:
+        parser.error(f"Paper status failed: {error}")
+        return 2
+    sys.stdout.write(f"{json.dumps(result, sort_keys=True)}\n")
+    return 0
+
+
+def _show_paper_signal(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """Derive and persist paper orders from target weights (SP 4.85)."""
+    engine, _settings = _paper_engine(parser)
+    if engine is None:
+        return 2
+    try:
+        targets = _parse_key_value(arguments.target, float, "target")
+        prices = _parse_key_value(arguments.price, float, "price")
+    except ValueError as error:
+        parser.error(str(error))
+        return 2
+    try:
+        with engine.begin() as connection:
+            result = paper_signal_command(
+                store=PaperRepositoryStore(connection),
+                run_id=arguments.run_id,
+                rebalance_date=arguments.rebalance_date,
+                targets=targets,
+                prices=prices,
+                source_run_id=arguments.source_run_id,
+            )
+    except (OSError, ValueError) as error:
+        parser.error(f"Paper signal failed: {error}")
+        return 2
+    sys.stdout.write(f"{json.dumps(result.to_dict(), sort_keys=True)}\n")
+    return 0
+
+
+def _parse_key_value(
+    items: Sequence[str], convert: Callable[[str], float], what: str
+) -> dict[str, float]:
+    """Parse ``KEY:VALUE`` CLI arguments into a mapping."""
+    parsed: dict[str, float] = {}
+    for item in items:
+        if ":" not in item:
+            raise ValueError(f"Invalid {what} {item!r}; expected KEY:VALUE.")
+        key, raw = item.split(":", 1)
+        try:
+            parsed[key] = convert(raw)
+        except ValueError as error:
+            raise ValueError(f"Invalid {what} value for {key!r}: {error}") from error
+    return parsed
+
+
+def _show_paper_order(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """Inspect a paper run's orders (SP 4.85)."""
+    engine, _settings = _paper_engine(parser)
+    if engine is None:
+        return 2
+    try:
+        with engine.connect() as connection:
+            store = PaperRepositoryStore(connection)
+            if arguments.order_command == "list":
+                payload: object = paper_order_list_command(store=store, run_id=arguments.run_id)
+            else:
+                payload = paper_order_show_command(
+                    store=store, run_id=arguments.run_id, order_id=arguments.order_id
+                )
+    except (OSError, ValueError) as error:
+        parser.error(f"Paper order {arguments.order_command} failed: {error}")
+        return 2
+    sys.stdout.write(f"{json.dumps(payload, sort_keys=True)}\n")
+    return 0
+
+
+def _show_paper_approve(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """Record an approval for a paper order or run (SP 4.86)."""
+    engine, _settings = _paper_engine(parser)
+    if engine is None:
+        return 2
+    try:
+        with engine.begin() as connection:
+            result = paper_approve_order_command(
+                store=PaperRepositoryStore(connection),
+                run_id=arguments.run_id,
+                order_id=arguments.order_id or "run",
+                approver=arguments.approver,
+                decision=ApprovalDecision.APPROVED,
+                reason=arguments.reason,
+            )
+    except (OSError, ValueError) as error:
+        parser.error(f"Paper approve failed: {error}")
+        return 2
+    sys.stdout.write(f"{json.dumps(result.to_dict(), sort_keys=True)}\n")
+    return 0
+
+
+def _show_paper_reject(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """Record a rejection for a paper order (SP 4.86)."""
+    engine, _settings = _paper_engine(parser)
+    if engine is None:
+        return 2
+    try:
+        with engine.begin() as connection:
+            result = paper_approve_order_command(
+                store=PaperRepositoryStore(connection),
+                run_id=arguments.run_id,
+                order_id=arguments.order_id,
+                approver=arguments.approver,
+                decision=ApprovalDecision.REJECTED,
+                reason=arguments.reason,
+            )
+    except (OSError, ValueError) as error:
+        parser.error(f"Paper reject failed: {error}")
+        return 2
+    sys.stdout.write(f"{json.dumps(result.to_dict(), sort_keys=True)}\n")
+    return 0
+
+
+def _show_paper_reconcile(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """Reconcile a paper run's account against its net value (SP 4.87)."""
+    engine, _settings = _paper_engine(parser)
+    if engine is None:
+        return 2
+    try:
+        with engine.begin() as connection:
+            result = paper_reconcile_command(
+                store=PaperRepositoryStore(connection),
+                run_id=arguments.run_id,
+                as_of=arguments.as_of,
+            )
+    except (OSError, ValueError) as error:
+        parser.error(f"Paper reconcile failed: {error}")
+        return 2
+    sys.stdout.write(f"{json.dumps(result.to_dict(), sort_keys=True)}\n")
+    return 0
+
+
+def _show_paper_report(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """Render a paper run's report as JSON, CSV or HTML (SP 4.87)."""
+    engine, _settings = _paper_engine(parser)
+    if engine is None:
+        return 2
+    try:
+        with engine.connect() as connection:
+            output = paper_report_command(
+                store=PaperRepositoryStore(connection),
+                run_id=arguments.run_id,
+                report_format=arguments.format,
+            )
+    except (OSError, ValueError) as error:
+        parser.error(f"Paper report failed: {error}")
+        return 2
+    sys.stdout.write(output + "\n")
     return 0

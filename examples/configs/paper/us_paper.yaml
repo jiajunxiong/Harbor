@@ -1,0 +1,40 @@
+# 美股模拟盘示例配置 (US Paper Example Configuration, MVP 4 / SP 4.88)
+#
+# 研究用途 (Research purpose):
+#   本配置仅用于 Harbor 模拟盘闭环（MVP 4）的演示、验证与教学，不构成投资建议，
+#   也不表示任何未来收益或回撤承诺。模拟盘只产生本地订单与对账记录，绝不创建
+#   券商凭据、不下真实订单（SP 4.83 / 4.95 发布前边界复核）。
+#
+# 关键假设 (Key assumptions) — 请在正式研究前逐条核对：
+#   - 策略：季度调仓、长仓（long-only）、单市场美股，基准币种 USD。
+#   - 账本币种包含 USD（美股报价币种）；初始资金 130,000 USD（约 100 万 HKD，演示规模）。
+#   - 美股采用整股/小数股规则（SP 4.18），不混用港股手数规则（SP 4.17）。
+#   - 手动模式（MANUAL）：所有高风险订单/策略经人工审批后才进入执行（SP 4.39）。
+#   - 进入模拟盘前，策略必须已通过 MVP 3 `QUALIFIED` 且版本化（SP 4.3 准入）。
+
+strategy: paper-demo-us
+strategy_version: "1.0.0"
+description: "US quarterly paper example (research only, no advice)"
+markets:
+  - US
+base_currency: USD
+currencies:
+  - USD
+initial_capital: 130000
+rebalance_frequency: QUARTERLY
+run_mode: MANUAL
+risk:
+  max_position_pct: 0.005
+  max_single_stock_pct: 0.05
+  max_industry_pct: 0.20
+  drawdown_warn_pct: 0.05
+  drawdown_defend_pct: 0.08
+  drawdown_circuit_pct: 0.10
+  daily_loss_limit_pct: 0.05
+  monthly_loss_limit_pct: 0.10
+stop:
+  max_days: 365
+  max_drawdown_pct: 0.10
+calendar_version: "2026.01"
+fx_source: mock
+random_seed: 7
