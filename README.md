@@ -489,6 +489,114 @@ harbor-cli validation report <run-id> --format html
 
 ---
 
+## 🧪 模拟盘（MVP 4）
+
+> 模拟盘输出仅用于研究，**不构成投资建议**，也不表示未来收益或回撤。MVP 4 只产生本地
+> 模拟盘订单与对账记录，**不创建券商凭据、不下真实订单**（SP 4.83 / 4.95 发布前边界复核）。
+
+模拟盘闭环沿 `信号 → 订单草案 → 风控审批 → 模拟盘成交 → 账本/净值对账 → 研究假设差异验证
+→ 监控与审计` 运行，每一环都可审计、可重放（SP 4.1–4.95）。
+
+### 模拟盘配置
+
+模拟盘使用**版本化配置**（SP 4.2，YAML/JSON），定义策略版本、市场范围、调仓频率、初始资金、
+多币种账本、风控参数、停止条件与运行模式（`MANUAL`/`AUTO`）。仓库内置**保守示例**
+（SP 4.88），研究用途与假设见各文件头部注释与
+[`examples/configs/paper/README.md`](examples/configs/paper/README.md)：
+
+```text
+examples/configs/paper/
+├── hk_paper.yaml            # 港股单市场，HKD 基准，港股手数/板位规则（SP 4.17）
+├── us_paper.yaml            # 美股单市场，USD 基准，美股整股/小数股规则（SP 4.18）
+├── cross_market_paper.yaml  # 港股+美股，HKD 基准、HKD/USD 多币种账本（SP 4.4）
+└── README.md                # 示例用途、假设与运行方式
+```
+
+配置经校验后生成稳定 `config_hash`（SP 4.2 / 4.9）；**相同配置 + 相同数据指纹 + 相同代码
+版本 + 相同随机种子 = 同一模拟盘运行**（可重放标识，SP 4.9）。差异验证与监控说明见
+[`docs/paper_examples.md`](docs/paper_examples.md)（SP 4.88）。
+
+### 生命周期与运行状态
+
+模拟盘运行沿状态机推进 `DRAFT → APPROVED → ACTIVE → STOPPED`（SP 4.10）；激活前必须
+**人工审批**（SP 4.39），回撤 10% 进入 `CIRCUIT_BROKEN` 冻结新订单（SP 4.36），独立复盘
+通过后才可恢复（SP 4.42）。非法迁移拒绝，审批/熔断事件可审计。
+
+### 运行与状态（SP 4.84）
+
+```bash
+# 初始化模拟盘运行（返回 run_id 与 DRAFT 状态）
+harbor-cli paper init --config examples/configs/paper/hk_paper.yaml \
+  --dataset-fingerprint <dataset-fingerprint>
+
+# 审批并激活（DRAFT -> APPROVED -> ACTIVE，记录审批）
+harbor-cli paper start <run-id> --approver <approver>
+
+# 查询状态视图 / 停止（终态）
+harbor-cli paper status <run-id>
+harbor-cli paper stop <run-id>
+```
+
+### 信号→订单（SP 4.85）
+
+```bash
+# 从目标权重派生并持久化订单（不足一手的港股单被跳过并记录，不静默丢弃，SP 4.21）
+harbor-cli paper signal <run-id> --rebalance-date 2026-01-02 \
+  --target 0001.HK:0.5 --price 0001.HK:50.0
+
+# 订单列表 / 单笔订单
+harbor-cli paper order list <run-id>
+harbor-cli paper order show <run-id> <order-id>
+```
+
+### 审批（SP 4.86）
+
+```bash
+# 人工审批/拒绝订单，审批记录（审批人、决策、规则、时间）可审计
+harbor-cli paper approve <run-id> --order-id <order-id> --approver <approver>
+harbor-cli paper reject <run-id> --order-id <order-id> --approver <approver>
+```
+
+### 对账与报告（SP 4.87）
+
+```bash
+# 对账：重建账户并与净值快照比对，差异写入表并告警、不静默修正（SP 4.58 / 4.61）
+harbor-cli paper reconcile <run-id> --as-of 2026-01-02
+
+# 报告导出：JSON（默认）/ CSV / HTML（含状态、订单、审批与对账差异）
+harbor-cli paper report <run-id> --format json
+harbor-cli paper report <run-id> --format csv
+harbor-cli paper report <run-id> --format html
+```
+
+### 差异验证与监控（SP 4.69–4.83）
+
+- **研究假设快照（SP 4.69）**：记录 OOS 假设中的滑点、成本、点差、成交量参与率、成交
+  规则与执行延迟，指纹排除来源运行 id（可重放）。
+- **实际参数采集（SP 4.70）**：记录每笔成交的实际成交价、已实现滑点、点差、执行延迟与参与。
+- **差异指标（SP 4.71 / 4.78）**：按市场、调仓日与标的量化点差/滑点/成交价/执行延迟/成本差异；
+  无假设的成交被标注（SP 4.74），不静默忽略。
+- **阈值与告警（SP 4.73 / 4.79）**：差异超过预注册阈值时记录告警（回落即恢复）；覆盖
+  不足或数据缺失被标注，不下结论。
+- **监控与周期摘要（SP 4.75 / 4.76 / 4.80）**：日度快照（净值、回撤、集中度、差异、对账）
+  与日/周/月摘要生成与查询。
+- **差异验证准入（SP 4.77）**：最少运行 12 个月、每启用市场至少 4 次完整调仓和 30 笔成交、
+  覆盖率与未解决对账差异；全部通过或独立豁免后才允许进入 MVP 5 单独评审。
+
+### 重放与一致性
+
+- 相同配置哈希、数据指纹、代码版本与随机种子 → 相同的订单、成交、净值、对账与差异结果
+  （SP 4.9 / 4.59 / 4.81 可重放）。
+- 订单、成交、审批与熔断事件均可通过 `paper_run_id` 追溯（SP 4.5–4.8 / 4.25）。
+
+### 发布前研究边界（SP 4.83 / 4.95）
+
+- 模拟盘路径只产生本地订单与对账记录，**不创建券商凭据、不下真实订单**。
+- 报告明确研究性质与停止条件，**不含收益或回撤承诺**（复用 SP 3.64 声明）。
+- **差异验证未通过（或未获独立豁免）不得升级**进入 MVP 5 实盘评估。
+
+---
+
 ## 📊 开发状态
 
 | MVP 阶段 | 状态 | 预计完成 |
