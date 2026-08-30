@@ -132,7 +132,7 @@ class MigrationChainTests(unittest.TestCase):
         bases = script.get_bases()
         self.assertEqual(len(heads), 1)
         self.assertEqual(len(bases), 1)
-        self.assertEqual(heads[0], "0023_create_validation_tables")
+        self.assertEqual(heads[0], "0024_create_paper_tables")
         self.assertEqual(bases[0], "0001_create_securities")
 
         versions = list(script.walk_revisions())
@@ -372,6 +372,96 @@ class ValidationSchemaDeclarationTests(unittest.TestCase):
                 self.assertIn(conclusion, source)
 
 
+class PaperSchemaDeclarationTests(unittest.TestCase):
+    """Verify the 0024 paper migration declares its constraints (SP 4.5-4.8).
+
+    These checks are database-free and run everywhere; the live equivalent is
+    :class:`PaperMigrationRunTests`.
+    """
+
+    def _source(self) -> str:
+        return (_VERSIONS_DIR / "0024_create_paper_tables.py").read_text(encoding="utf-8")
+
+    def test_paper_runs_declares_status_check_and_pk(self) -> None:
+        source = self._source()
+        self.assertIn("ck_paper_runs_status", source)
+        self.assertIn("pk_paper_runs", source)
+        for status in (
+            "DRAFT",
+            "APPROVED",
+            "ACTIVE",
+            "PAUSED",
+            "CIRCUIT_BROKEN",
+            "STOPPED",
+        ):
+            with self.subTest(status=status):
+                self.assertIn(status, source)
+
+    def test_orders_declare_constraints_and_indexes(self) -> None:
+        source = self._source()
+        for name in (
+            "ck_paper_orders_side",
+            "ck_paper_orders_status",
+            "fk_paper_orders_run",
+            "pk_paper_orders",
+            "uq_paper_orders_id",
+            "ix_paper_orders_run_created",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(name, source)
+        for status in (
+            "CREATED",
+            "SUBMITTED",
+            "PARTIALLY_FILLED",
+            "FILLED",
+            "CANCELLED",
+            "REJECTED",
+        ):
+            with self.subTest(status=status):
+                self.assertIn(status, source)
+
+    def test_fills_declare_constraints_and_indexes(self) -> None:
+        source = self._source()
+        for name in (
+            "ck_paper_fills_side",
+            "fk_paper_fills_run",
+            "fk_paper_fills_order",
+            "pk_paper_fills",
+            "ix_paper_fills_run_date",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(name, source)
+
+    def test_approvals_and_breakers_declare_constraints(self) -> None:
+        source = self._source()
+        for name in (
+            "ck_risk_approvals_decision",
+            "fk_risk_approvals_run",
+            "uq_risk_approvals_id",
+            "ck_circuit_breakers_kind",
+            "fk_circuit_breakers_run",
+            "uq_circuit_breakers_id",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(name, source)
+        for kind in ("DAILY", "MONTHLY", "DRAWDOWN"):
+            with self.subTest(kind=kind):
+                self.assertIn(kind, source)
+
+    def test_net_values_and_differences_declare_constraints(self) -> None:
+        source = self._source()
+        for name in (
+            "fk_paper_net_values_run",
+            "pk_paper_net_values",
+            "uq_paper_net_values_day_currency",
+            "fk_paper_reconciliation_differences_run",
+            "pk_paper_reconciliation_differences",
+            "uq_paper_reconciliation_differences_check",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(name, source)
+
+
 @unittest.skipUnless(_TEST_DATABASE_URL, "HARBOR_TEST_DATABASE_URL is not set")
 class BacktestAndFxMigrationRunTests(unittest.TestCase):
     """Upgrade a fresh DB and verify backtest + FX constraints and indexes (SP 2.77)."""
@@ -597,6 +687,110 @@ class ValidationMigrationRunTests(unittest.TestCase):
             "ix_validation_folds_run",
             "ix_validation_stress_results_run",
             "ix_validation_warnings_run",
+        ):
+            with self.subTest(name=expected):
+                self.assertIn(expected, names)
+
+
+@unittest.skipUnless(_TEST_DATABASE_URL, "HARBOR_TEST_DATABASE_URL is not set")
+class PaperMigrationRunTests(unittest.TestCase):
+    """Upgrade a fresh DB and verify the paper tables (SP 4.5-4.8)."""
+
+    _TABLES = (
+        "paper_runs",
+        "paper_orders",
+        "paper_fills",
+        "risk_approvals",
+        "circuit_breakers",
+        "paper_net_values",
+        "paper_reconciliation_differences",
+    )
+
+    def setUp(self) -> None:
+        self.engine = _fresh_engine()
+        _upgrade_to_head(self.engine)
+        self.inspector = inspect(self.engine)
+
+    def test_all_paper_tables_exist(self) -> None:
+        created = set(self.inspector.get_table_names())
+        for table in self._TABLES:
+            with self.subTest(table=table):
+                self.assertIn(table, created)
+
+    def test_primary_keys_are_created(self) -> None:
+        self.assertEqual(
+            self.inspector.get_pk_constraint("paper_runs")["constrained_columns"],
+            ["run_id"],
+        )
+        for table in (
+            "paper_orders",
+            "paper_fills",
+            "risk_approvals",
+            "circuit_breakers",
+            "paper_net_values",
+            "paper_reconciliation_differences",
+        ):
+            with self.subTest(table=table):
+                self.assertEqual(
+                    self.inspector.get_pk_constraint(table)["constrained_columns"], ["id"]
+                )
+
+    def test_foreign_keys_are_created(self) -> None:
+        names = {
+            fk["name"] for table in self._TABLES for fk in self.inspector.get_foreign_keys(table)
+        }
+        for expected in (
+            "fk_paper_orders_run",
+            "fk_paper_fills_run",
+            "fk_paper_fills_order",
+            "fk_risk_approvals_run",
+            "fk_circuit_breakers_run",
+            "fk_paper_net_values_run",
+            "fk_paper_reconciliation_differences_run",
+        ):
+            with self.subTest(name=expected):
+                self.assertIn(expected, names)
+
+    def test_check_constraints_are_created(self) -> None:
+        names = {
+            check["name"]
+            for table in self._TABLES
+            for check in self.inspector.get_check_constraints(table)
+        }
+        for expected in (
+            "ck_paper_runs_status",
+            "ck_paper_orders_side",
+            "ck_paper_orders_status",
+            "ck_paper_fills_side",
+            "ck_risk_approvals_decision",
+            "ck_circuit_breakers_kind",
+        ):
+            with self.subTest(name=expected):
+                self.assertIn(expected, names)
+
+    def test_unique_constraints_are_created(self) -> None:
+        names = {
+            unique["name"]
+            for table in self._TABLES
+            for unique in self.inspector.get_unique_constraints(table)
+        }
+        for expected in (
+            "uq_paper_orders_id",
+            "uq_risk_approvals_id",
+            "uq_circuit_breakers_id",
+            "uq_paper_net_values_day_currency",
+            "uq_paper_reconciliation_differences_check",
+        ):
+            with self.subTest(name=expected):
+                self.assertIn(expected, names)
+
+    def test_explicit_indexes_are_created(self) -> None:
+        names = {
+            index["name"] for table in self._TABLES for index in self.inspector.get_indexes(table)
+        }
+        for expected in (
+            "ix_paper_orders_run_created",
+            "ix_paper_fills_run_date",
         ):
             with self.subTest(name=expected):
                 self.assertIn(expected, names)

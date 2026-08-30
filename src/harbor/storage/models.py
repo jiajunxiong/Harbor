@@ -918,6 +918,252 @@ class ValidationWarning(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class PaperRun(Base):
+    """A master record of one paper run (MVP 4 / SP 4.5 / 4.9).
+
+    Records the strategy identity/version, the validated configuration
+    snapshot and its stable hash (SP 4.2), the dataset fingerprint and code
+    version (SP 4.9 replay identity), the market scope, base currency and the
+    lifecycle status (SP 4.10 state machine) so every paper run is traceable
+    and replayable. Status values mirror
+    :class:`harbor.core.paper_domain.PaperStatus`.
+    """
+
+    __tablename__ = "paper_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('DRAFT', 'APPROVED', 'ACTIVE', 'PAUSED', 'CIRCUIT_BROKEN', 'STOPPED')",
+            name="ck_paper_runs_status",
+        ),
+    )
+
+    run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    strategy: Mapped[str] = mapped_column(String(64), nullable=False)
+    strategy_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    config_snapshot: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    dataset_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    code_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    markets: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    base_currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PaperOrder(Base):
+    """A paper order (MVP 4 / SP 4.6).
+
+    One row per ``(paper_run_id, order_id)`` mirroring the SP 4.1 ``PaperOrder``:
+    market, symbol, side, quantity, currency, price type, lifecycle status and
+    timestamp, linked to its signal intention (SP 4.25 traceability).
+    """
+
+    __tablename__ = "paper_orders"
+    __table_args__ = (
+        CheckConstraint("side IN ('BUY', 'SELL')", name="ck_paper_orders_side"),
+        CheckConstraint(
+            "status IN ("
+            "'CREATED', 'SUBMITTED', 'PARTIALLY_FILLED', 'FILLED', "
+            "'CANCELLED', 'REJECTED'"
+            ")",
+            name="ck_paper_orders_status",
+        ),
+        ForeignKeyConstraint(
+            ["paper_run_id"],
+            ["paper_runs.run_id"],
+            name="fk_paper_orders_run",
+        ),
+        UniqueConstraint("paper_run_id", "order_id", name="uq_paper_orders_id"),
+        Index("ix_paper_orders_run_created", "paper_run_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    paper_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    order_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    market: Mapped[str] = mapped_column(String(2), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    side: Mapped[str] = mapped_column(String(4), nullable=False)
+    quantity: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    price_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    intention_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class PaperFill(Base):
+    """An executed paper order (成交, MVP 4 / SP 4.6).
+
+    One row per ``(paper_run_id, fill_id)``; ``order_id`` links the fill to
+    its order (SP 4.6 / 4.25 traceability).
+    """
+
+    __tablename__ = "paper_fills"
+    __table_args__ = (
+        CheckConstraint("side IN ('BUY', 'SELL')", name="ck_paper_fills_side"),
+        ForeignKeyConstraint(
+            ["paper_run_id"],
+            ["paper_runs.run_id"],
+            name="fk_paper_fills_run",
+        ),
+        ForeignKeyConstraint(
+            ["paper_run_id", "order_id"],
+            ["paper_orders.paper_run_id", "paper_orders.order_id"],
+            name="fk_paper_fills_order",
+        ),
+        Index("ix_paper_fills_run_date", "paper_run_id", "trade_date"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    paper_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    fill_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    order_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    market: Mapped[str] = mapped_column(String(2), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    side: Mapped[str] = mapped_column(String(4), nullable=False)
+    quantity: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    price: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    fee: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+
+
+class RiskApproval(Base):
+    """A recorded risk approval for a paper run (MVP 4 / SP 4.7 / 4.39).
+
+    One row per ``(paper_run_id, approval_id)``: the approved scope (order or
+    run), the approver, the decision (SP 4.1 ``ApprovalDecision``), the risk
+    rule, an optional reason and the UTC decision time so every manual
+    intervention is auditable.
+    """
+
+    __tablename__ = "risk_approvals"
+    __table_args__ = (
+        CheckConstraint(
+            "decision IN ('APPROVED', 'REJECTED')",
+            name="ck_risk_approvals_decision",
+        ),
+        ForeignKeyConstraint(
+            ["paper_run_id"],
+            ["paper_runs.run_id"],
+            name="fk_risk_approvals_run",
+        ),
+        UniqueConstraint("paper_run_id", "approval_id", name="uq_risk_approvals_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    paper_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    approval_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    scope: Mapped[str] = mapped_column(String(128), nullable=False)
+    approver: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    rule: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CircuitBreaker(Base):
+    """A circuit-breaker state for a paper run (MVP 4 / SP 4.7).
+
+    One row per ``(paper_run_id, breaker_id)`` mirroring the SP 4.1
+    ``CircuitBreakerState``: kind (SP 4.1 ``CircuitBreakerKind``), whether it
+    is currently triggered, the frozen scope, the trigger reason and the
+    frozen / recovery times (SP 4.42).
+    """
+
+    __tablename__ = "circuit_breakers"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('DAILY', 'MONTHLY', 'DRAWDOWN')",
+            name="ck_circuit_breakers_kind",
+        ),
+        ForeignKeyConstraint(
+            ["paper_run_id"],
+            ["paper_runs.run_id"],
+            name="fk_circuit_breakers_run",
+        ),
+        UniqueConstraint("paper_run_id", "breaker_id", name="uq_circuit_breakers_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    paper_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    breaker_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    triggered: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    scope: Mapped[str] = mapped_column(String(128), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    frozen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    recovered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PaperNetValue(Base):
+    """A daily net-value snapshot of a paper run (MVP 4 / SP 4.8).
+
+    One row per ``(paper_run_id, as_of_date, currency)``: cash, securities
+    value, realized fees and total value in the snapshot currency, so the
+    paper equity path is per-day auditable (SP 4.56).
+    """
+
+    __tablename__ = "paper_net_values"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["paper_run_id"],
+            ["paper_runs.run_id"],
+            name="fk_paper_net_values_run",
+        ),
+        UniqueConstraint(
+            "paper_run_id",
+            "as_of_date",
+            "currency",
+            name="uq_paper_net_values_day_currency",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    paper_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    cash: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    securities_value: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    fees_paid: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    total_value: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+
+
+class PaperReconciliationDifference(Base):
+    """A recorded reconciliation difference for a paper run (MVP 4 / SP 4.8).
+
+    One row per ``(paper_run_id, as_of_date, check_name)``: the expected vs
+    actual value of a reconciled quantity and a detail message. Differences
+    are recorded and surfaced, never silently corrected (SP 4.61).
+    """
+
+    __tablename__ = "paper_reconciliation_differences"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["paper_run_id"],
+            ["paper_runs.run_id"],
+            name="fk_paper_reconciliation_differences_run",
+        ),
+        UniqueConstraint(
+            "paper_run_id",
+            "as_of_date",
+            "check_name",
+            name="uq_paper_reconciliation_differences_check",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    paper_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
+    check_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    expected: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    actual: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 v_quality_summary_hk = Table(
     "v_quality_summary_hk",
     Base.metadata,
