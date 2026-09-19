@@ -30,10 +30,18 @@
 
 ## 运行（CLI，SP 4.84–4.87）
 
+> **前置**：先激活虚拟环境 `source .venv/bin/activate`，否则会报 `harbor-cli: command not found`。
+> 下文 `<run-id>`、`<order-id>`、`<approver>` 均为**占位符**，请替换为真实值，**不要连同尖括号一起复制**。
+>
+> **`--dataset-fingerprint` 怎么填**：它是本次运行的可重放标识（SP 4.9），**最长 64 字符、无格式校验**。
+> 优先填 MVP 3 冻结数据集清单的指纹（SP 3.7，64 位十六进制），可从验证运行查到：
+> `SELECT fingerprint FROM validation_manifests WHERE validation_run_id = '<validation-run-id>';`
+> 仅做冒烟/演示时，可用任意稳定短标识，例如 `hk-paper-demo-2026`。
+
 ```bash
 # 1) 初始化模拟盘运行（返回 run_id 与 DRAFT 状态）
 harbor-cli paper init --config examples/configs/paper/hk_paper.yaml \
-  --dataset-fingerprint <dataset-fingerprint>
+  --dataset-fingerprint hk-paper-demo-2026
 
 # 2) 审批并激活（DRAFT -> APPROVED -> ACTIVE，记录审批）
 harbor-cli paper start <run-id> --approver <approver>

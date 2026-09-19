@@ -13,13 +13,18 @@
 以下命令在 Docker 环境（SP 4.92）中完成“迁移 → 模拟盘运行 → 对账 → 报告导出”的
 完整验收流：
 
+> `<dataset-fingerprint>`、`<run-id>`、`<order-id>`、`<approver>` 均为**占位符**，请替换为真实值
+> （不要连同尖括号一起复制，否则 bash 会把 `<` 当作输入重定向而报语法错误）。
+> `--dataset-fingerprint` 为运行的可重放标识（SP 4.9），最长 64 字符；优先使用 MVP 3 冻结数据集
+> 清单指纹（SP 3.7），冒烟/演示可用稳定短标识（如 `hk-paper-demo-2026`）。
+
 ```bash
 # 迁移数据库到最新 schema（含模拟盘运行/订单/成交/审批/熔断/净值/差异表，SP 4.5–4.8）
 alembic upgrade head
 
 # 初始化模拟盘运行（SP 4.84）：返回 run_id 与 DRAFT 状态
 harbor-cli paper init --config examples/configs/paper/hk_paper.yaml \
-  --dataset-fingerprint <dataset-fingerprint>
+  --dataset-fingerprint hk-paper-demo-2026
 harbor-cli paper start <run-id> --approver <approver>
 
 # 信号→订单（SP 4.85）

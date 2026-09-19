@@ -41,8 +41,13 @@
 
 ## CLI（SP 4.84–4.87）
 
+> **前置**：先激活虚拟环境 `source .venv/bin/activate`，否则会报 `harbor-cli: command not found`。
+> `<run-id>`、`<order-id>`、`<approver>`、`<date>`、`SYM:W`/`SYM:P` 均为**占位符**，请替换为真实值。
+> `--dataset-fingerprint` 是运行的可重放标识（SP 4.9），最长 64 字符、无格式校验；优先用 MVP 3 冻结
+> 数据集清单指纹（SP 3.7），冒烟/演示可用稳定短标识（如 `hk-paper-demo-2026`）。
+
 ```bash
-harbor-cli paper init --config <paper.yaml> --dataset-fingerprint <fp>
+harbor-cli paper init --config examples/configs/paper/hk_paper.yaml --dataset-fingerprint hk-paper-demo-2026
 harbor-cli paper start <run-id> --approver <approver>
 harbor-cli paper signal <run-id> --rebalance-date <date> --target SYM:W --price SYM:P
 harbor-cli paper order list|show <run-id> [<order-id>]
