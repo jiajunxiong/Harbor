@@ -192,7 +192,7 @@ def validation_event_rows() -> list[dict[str, Any]]:
 
 
 def validation_trial_row() -> dict[str, Any]:
-    """One parameter trial (SP 5.27)."""
+    """One parameter trial (SP 5.29)."""
     return {
         "trial_id": "trial-1",
         "parameters": [{"name": "top_n", "value": 10}],
@@ -210,7 +210,7 @@ def validation_trial_row() -> dict[str, Any]:
 
 
 def validation_fold_row() -> dict[str, Any]:
-    """One walk-forward fold (SP 5.29)."""
+    """One walk-forward fold (SP 5.32)."""
     return {
         "fold_index": 0,
         "train_start": date(2019, 1, 1),
