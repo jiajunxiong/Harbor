@@ -12,16 +12,19 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from harbor.cli import main
 from harbor.core.paper_domain import PaperStatus
 from harbor.services.paper import (
+    DEFAULT_RUN_LIST_LIMIT,
+    MAX_RUN_LIST_LIMIT,
     PaperServiceError,
     paper_approve_order_command,
     paper_init_command,
+    paper_list_command,
     paper_order_list_command,
     paper_order_show_command,
     paper_reconcile_command,
@@ -72,6 +75,17 @@ class FakeStore:
 
     def get_run(self, run_id: str) -> dict[str, object] | None:
         return self.runs.get(run_id)
+
+    def list_runs(self, *, limit: int, offset: int) -> list[dict[str, object]]:
+        rows = sorted(
+            self.runs.values(),
+            key=lambda row: (str(row.get("created_at")), str(row["run_id"])),
+            reverse=True,
+        )
+        return rows[offset : offset + limit]
+
+    def count_runs(self) -> int:
+        return len(self.runs)
 
     def update_run(self, *, run_id: str, status: str, started_at=None, stopped_at=None) -> int:
         if run_id not in self.runs:
@@ -161,6 +175,37 @@ def _store_with_run(fake: FakeStore | None = None) -> tuple[FakeStore, str]:
     return store, result.run_id
 
 
+def _seed_run(store: FakeStore, run_id: str, *, created_at: datetime) -> None:
+    """Seed one run row directly so ordering tests use explicit timestamps."""
+    store.runs[run_id] = {
+        "run_id": run_id,
+        "status": PaperStatus.DRAFT.value,
+        "strategy": "paper-demo",
+        "strategy_version": "1.0.0",
+        "code_version": "1.0.0",
+        "config_hash": "hash-1",
+        "config_snapshot": {},
+        "dataset_fingerprint": "dataset-abc",
+        "markets": ["HK"],
+        "base_currency": "HKD",
+        "created_at": created_at,
+        "started_at": None,
+        "stopped_at": None,
+    }
+
+
+class RecordingStore(FakeStore):
+    """A fake store that records the page bounds it was asked for."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.queries: list[tuple[int, int]] = []
+
+    def list_runs(self, *, limit: int, offset: int) -> list[dict[str, object]]:
+        self.queries.append((limit, offset))
+        return super().list_runs(limit=limit, offset=offset)
+
+
 class PaperLifecycleServiceTests(unittest.TestCase):
     """The lifecycle commands (SP 4.84)."""
 
@@ -200,6 +245,107 @@ class PaperLifecycleServiceTests(unittest.TestCase):
         self.assertEqual(status["run_id"], run_id)
         self.assertEqual(status["status"], PaperStatus.DRAFT.value)
         self.assertEqual(status["order_count"], 0)
+
+
+class PaperRunListServiceTests(unittest.TestCase):
+    """The run-list lookup that recovers a lost run id.
+
+    Before this command existed the only documented way to find a run id again
+    was `SELECT run_id FROM paper_runs`, so the list has to stay bounded and has
+    to be honest about truncation.
+    """
+
+    def _seeded(self, count: int = 3) -> tuple[RecordingStore, list[str]]:
+        store = RecordingStore()
+        run_ids = []
+        for index in range(count):
+            run_id = f"paper-{index}"
+            run_ids.append(run_id)
+            _seed_run(store, run_id, created_at=datetime(2026, 1, 1 + index, tzinfo=timezone.utc))
+        return store, run_ids
+
+    def test_list_returns_runs_newest_first(self) -> None:
+        store, _ = self._seeded()
+        result = paper_list_command(store=store)  # type: ignore[arg-type]
+        self.assertEqual([row["run_id"] for row in result.runs], ["paper-2", "paper-1", "paper-0"])
+
+    def test_list_rows_carry_the_identity_needed_to_audit(self) -> None:
+        store, _ = self._seeded(count=1)
+        result = paper_list_command(store=store)  # type: ignore[arg-type]
+        row = result.runs[0]
+        for field in (
+            "run_id",
+            "status",
+            "strategy",
+            "strategy_version",
+            "code_version",
+            "markets",
+            "base_currency",
+            "dataset_fingerprint",
+            "created_at",
+        ):
+            self.assertIn(field, row)
+        self.assertEqual(row["base_currency"], "HKD")
+
+    def test_list_reports_the_full_history_size(self) -> None:
+        store, _ = self._seeded()
+        result = paper_list_command(store=store)  # type: ignore[arg-type]
+        self.assertEqual(result.total, 3)
+        self.assertEqual(result.offset, 0)
+
+    def test_list_defaults_to_the_bounded_page(self) -> None:
+        store, _ = self._seeded()
+        result = paper_list_command(store=store)  # type: ignore[arg-type]
+        self.assertEqual(result.limit, DEFAULT_RUN_LIST_LIMIT)
+        self.assertEqual(store.queries, [(DEFAULT_RUN_LIST_LIMIT, 0)])
+
+    def test_list_pages_without_hiding_truncation(self) -> None:
+        store, _ = self._seeded()
+        first = paper_list_command(store=store, limit=2)  # type: ignore[arg-type]
+        self.assertEqual(len(first.runs), 2)
+        self.assertEqual(first.total, 3)
+        self.assertEqual(first.next_offset, 2)
+
+        last = paper_list_command(store=store, limit=2, offset=first.next_offset)  # type: ignore[arg-type]
+        self.assertEqual([row["run_id"] for row in last.runs], ["paper-0"])
+        self.assertIsNone(last.next_offset)
+
+    def test_list_pushes_the_bound_into_storage(self) -> None:
+        """The page bound must reach the query, not be applied in Python."""
+        store, _ = self._seeded()
+        paper_list_command(store=store, limit=1, offset=2)  # type: ignore[arg-type]
+        self.assertEqual(store.queries, [(1, 2)])
+
+    def test_list_refuses_an_unbounded_or_oversized_limit(self) -> None:
+        store, _ = self._seeded()
+        for limit in (0, -1):
+            with self.subTest(limit=limit):
+                with self.assertRaises(PaperServiceError) as context:
+                    paper_list_command(store=store, limit=limit)  # type: ignore[arg-type]
+                self.assertIn("positive integer", str(context.exception))
+        with self.assertRaises(PaperServiceError) as context:
+            paper_list_command(store=store, limit=MAX_RUN_LIST_LIMIT + 1)  # type: ignore[arg-type]
+        self.assertIn("must not exceed", str(context.exception))
+
+    def test_list_refuses_a_negative_offset(self) -> None:
+        store, _ = self._seeded()
+        with self.assertRaises(PaperServiceError):
+            paper_list_command(store=store, offset=-1)  # type: ignore[arg-type]
+
+    def test_list_of_an_empty_store_is_an_empty_page(self) -> None:
+        result = paper_list_command(store=RecordingStore())  # type: ignore[arg-type]
+        self.assertEqual(result.runs, ())
+        self.assertEqual(result.total, 0)
+        self.assertIsNone(result.next_offset)
+
+    def test_list_renders_as_a_json_page(self) -> None:
+        store, _ = self._seeded(count=1)
+        rendered = paper_list_command(store=store).to_dict()  # type: ignore[arg-type]
+        self.assertEqual(rendered["total"], 1)
+        self.assertEqual(rendered["limit"], DEFAULT_RUN_LIST_LIMIT)
+        self.assertEqual(rendered["offset"], 0)
+        self.assertIsNone(rendered["next_offset"])
+        self.assertEqual(json.loads(json.dumps(rendered))["total"], 1)
 
 
 class PaperSignalOrderServiceTests(unittest.TestCase):
@@ -416,6 +562,7 @@ class PaperCliWiringTests(unittest.TestCase):
         self.assertEqual(exit_context.exception.code, 0)
         self.assertIn("init", output.getvalue())
         self.assertIn("reconcile", output.getvalue())
+        self.assertIn("list", output.getvalue())
 
     def test_paper_init_prints_run_id_and_status(self) -> None:
         class _Result:
@@ -468,6 +615,45 @@ class PaperCliWiringTests(unittest.TestCase):
         summary = json.loads(output.getvalue())
         self.assertEqual(summary["status"], "ACTIVE")
 
+    def test_paper_list_prints_the_page_and_forwards_the_flags(self) -> None:
+        output = io.StringIO()
+        page = MagicMock(to_dict=lambda: {"runs": [{"run_id": "paper-1"}], "total": 1})
+        with patch.dict(os.environ, self.ENVIRONMENT, clear=True):
+            with patch("harbor.cli.create_engine", return_value=MagicMock()):
+                with patch("harbor.cli.paper_list_command", return_value=page) as list_mock:
+                    with redirect_stdout(output), redirect_stderr(io.StringIO()):
+                        exit_code = main(["paper", "list", "--limit", "5", "--offset", "10"])
+        self.assertEqual(exit_code, 0)
+        kwargs = list_mock.call_args.kwargs
+        self.assertEqual(kwargs["limit"], 5)
+        self.assertEqual(kwargs["offset"], 10)
+        self.assertEqual(json.loads(output.getvalue())["total"], 1)
+
+    def test_paper_list_passes_no_limit_when_the_flag_is_omitted(self) -> None:
+        with patch.dict(os.environ, self.ENVIRONMENT, clear=True):
+            with patch("harbor.cli.create_engine", return_value=MagicMock()):
+                with patch(
+                    "harbor.cli.paper_list_command",
+                    return_value=MagicMock(to_dict=lambda: {"runs": [], "total": 0}),
+                ) as list_mock:
+                    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                        main(["paper", "list"])
+        kwargs = list_mock.call_args.kwargs
+        self.assertIsNone(kwargs["limit"])
+        self.assertEqual(kwargs["offset"], 0)
+
+    def test_paper_list_surfaces_a_refused_bound(self) -> None:
+        with patch.dict(os.environ, self.ENVIRONMENT, clear=True):
+            with patch("harbor.cli.create_engine", return_value=MagicMock()):
+                with patch(
+                    "harbor.cli.paper_list_command",
+                    side_effect=PaperServiceError("limit must not exceed 200."),
+                ):
+                    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                        with self.assertRaises(SystemExit) as exit_context:
+                            main(["paper", "list", "--limit", "100000"])
+        self.assertEqual(exit_context.exception.code, 2)
+
     def test_paper_signal_parses_targets(self) -> None:
         output = io.StringIO()
         with patch.dict(os.environ, self.ENVIRONMENT, clear=True):
@@ -511,3 +697,19 @@ class PaperCliWiringTests(unittest.TestCase):
                 with self.assertRaises(SystemExit) as exit_context:
                     main(["paper", "export", "paper-1"])
         self.assertEqual(exit_context.exception.code, 2)
+
+
+class PaperRunListBoundTests(unittest.TestCase):
+    """The run list is bounded identically by the CLI and the read API (SP 5.6).
+
+    A test may cross layers even though production code must not: the service
+    layer deliberately does not import `harbor.api`, so this is where the two
+    bounds are pinned together. If either surface loosens its page size the
+    other would answer "how many paper runs are there?" differently.
+    """
+
+    def test_service_bounds_match_the_read_api(self) -> None:
+        from harbor.api.config import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT
+
+        self.assertEqual(DEFAULT_RUN_LIST_LIMIT, DEFAULT_PAGE_LIMIT)
+        self.assertEqual(MAX_RUN_LIST_LIMIT, MAX_PAGE_LIMIT)

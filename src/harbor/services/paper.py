@@ -60,6 +60,12 @@ from harbor.core.paper_state_machine import PaperRunState, PaperStateError
 from harbor.core.paper_target_portfolio import derive_target_portfolio
 from harbor.storage.paper_repositories import PaperRepository
 
+#: Page bounds for the run list. Deliberately equal to the read API's (SP 5.6) so
+#: that both surfaces answer "how many paper runs are there?" the same way; a
+#: test pins the three constants together so they cannot drift apart.
+DEFAULT_RUN_LIST_LIMIT = 50
+MAX_RUN_LIST_LIMIT = 200
+
 
 class PaperServiceError(ValueError):
     """Raised when a paper command cannot be orchestrated (SP 4.84)."""
@@ -116,6 +122,32 @@ class PaperReconcileResult:
         }
 
 
+@dataclass(frozen=True)
+class PaperRunListResult:
+    """One bounded page of paper runs, newest first (audit lookup).
+
+    ``total`` is the full count *before* pagination and ``next_offset`` is
+    ``None`` only on the last page, so a caller can tell a complete answer from
+    a truncated one instead of assuming it saw every run.
+    """
+
+    runs: tuple[dict[str, object], ...]
+    total: int
+    limit: int
+    offset: int
+    next_offset: int | None
+
+    def to_dict(self) -> dict[str, object]:
+        """Render the page as a JSON-serializable summary."""
+        return {
+            "runs": list(self.runs),
+            "total": self.total,
+            "limit": self.limit,
+            "offset": self.offset,
+            "next_offset": self.next_offset,
+        }
+
+
 class PaperStore(Protocol):
     """The storage surface the paper service needs (SP 4.5-4.8)."""
 
@@ -136,6 +168,10 @@ class PaperStore(Protocol):
     ) -> int: ...
 
     def get_run(self, run_id: str) -> dict[str, Any] | None: ...
+
+    def list_runs(self, *, limit: int, offset: int) -> Sequence[dict[str, Any]]: ...
+
+    def count_runs(self) -> int: ...
 
     def update_run(
         self,
@@ -185,6 +221,17 @@ class PaperRepositoryStore:
             for row in self._connection.execute(self._repository.get_run(run_id)).mappings()
         ]
         return rows[0] if rows else None
+
+    def list_runs(self, *, limit: int, offset: int) -> Sequence[dict[str, Any]]:
+        return [
+            dict(row)
+            for row in self._connection.execute(
+                self._repository.list_runs(limit=limit, offset=offset)
+            ).mappings()
+        ]
+
+    def count_runs(self) -> int:
+        return int(self._connection.execute(self._repository.count_runs()).scalar_one())
 
     def update_run(self, **kwargs: object) -> int:
         return self._repository.update_run(**kwargs)  # type: ignore[arg-type]
@@ -443,6 +490,66 @@ def _iso(value: object) -> str | None:
     if callable(iso):
         return str(iso())
     return str(value)
+
+
+def _run_list_row(row: Mapping[str, Any]) -> dict[str, object]:
+    """Render one run as the auditable identity the list exposes."""
+    return {
+        "run_id": row["run_id"],
+        "status": row["status"],
+        "strategy": row["strategy"],
+        "strategy_version": row["strategy_version"],
+        "code_version": row["code_version"],
+        "markets": row["markets"],
+        "base_currency": row["base_currency"],
+        "dataset_fingerprint": row["dataset_fingerprint"],
+        "created_at": _iso(row.get("created_at")),
+        "started_at": _iso(row.get("started_at")),
+        "stopped_at": _iso(row.get("stopped_at")),
+    }
+
+
+def paper_list_command(
+    *,
+    store: PaperStore,
+    limit: int | None = None,
+    offset: int = 0,
+) -> PaperRunListResult:
+    """Return one bounded page of paper runs, newest first (audit lookup).
+
+    ``docs/paper_examples.md`` recorded that the CLI offered no way to recover a
+    run id once the printed value was lost, and told the operator to query the
+    ``paper_runs`` table by hand. This command closes that gap by exposing the
+    same read the monitoring API already performs (SP 5.8) under the same
+    bounded page policy (SP 5.6), so the two surfaces agree.
+
+    Raises:
+        PaperServiceError: If ``limit`` is not a positive integer within the
+            bound, or ``offset`` is negative. An unbounded query is refused
+            rather than silently served, because an unbounded list is exactly
+            the failure this command exists to prevent.
+    """
+    resolved_limit = DEFAULT_RUN_LIST_LIMIT if limit is None else limit
+    if resolved_limit < 1:
+        raise PaperServiceError(
+            "limit must be a positive integer; unbounded queries are not permitted."
+        )
+    if resolved_limit > MAX_RUN_LIST_LIMIT:
+        raise PaperServiceError(f"limit must not exceed {MAX_RUN_LIST_LIMIT}.")
+    if offset < 0:
+        raise PaperServiceError("offset must be a non-negative integer.")
+
+    rows = store.list_runs(limit=resolved_limit, offset=offset)
+    total = store.count_runs()
+    runs = tuple(_run_list_row(row) for row in rows)
+    consumed = min(offset + len(runs), total)
+    return PaperRunListResult(
+        runs=runs,
+        total=total,
+        limit=resolved_limit,
+        offset=offset,
+        next_offset=consumed if consumed < total else None,
+    )
 
 
 def paper_signal_command(

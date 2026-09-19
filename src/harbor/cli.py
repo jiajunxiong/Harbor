@@ -38,9 +38,12 @@ from harbor.services.backtest import (
     show_backtest,
 )
 from harbor.services.paper import (
+    DEFAULT_RUN_LIST_LIMIT,
+    MAX_RUN_LIST_LIMIT,
     PaperRepositoryStore,
     paper_approve_order_command,
     paper_init_command,
+    paper_list_command,
     paper_order_list_command,
     paper_order_show_command,
     paper_reconcile_command,
@@ -272,6 +275,20 @@ def build_parser() -> argparse.ArgumentParser:
         "status", help="Show a paper run's status and artifact counts."
     )
     status_parser.add_argument("run_id", help="The paper run id.")
+    list_parser = paper_subparsers.add_parser(
+        "list", help="List paper runs, newest first (use it to recover a run id)."
+    )
+    list_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help=(
+            f"Maximum runs to return (default {DEFAULT_RUN_LIST_LIMIT}, max {MAX_RUN_LIST_LIMIT})."
+        ),
+    )
+    list_parser.add_argument(
+        "--offset", type=int, default=0, help="Number of runs to skip (default 0)."
+    )
     signal_parser = paper_subparsers.add_parser(
         "signal", help="Derive and persist paper orders from target weights (SP 4.85)."
     )
@@ -916,6 +933,8 @@ def _show_paper(parser: argparse.ArgumentParser, arguments: argparse.Namespace) 
         return _show_paper_stop(parser, arguments)
     if arguments.paper_command == "status":
         return _show_paper_status(parser, arguments)
+    if arguments.paper_command == "list":
+        return _show_paper_list(parser, arguments)
     if arguments.paper_command == "signal":
         return _show_paper_signal(parser, arguments)
     if arguments.paper_command == "order":
@@ -1002,6 +1021,25 @@ def _show_paper_status(parser: argparse.ArgumentParser, arguments: argparse.Name
         parser.error(f"Paper status failed: {error}")
         return 2
     sys.stdout.write(f"{json.dumps(result, sort_keys=True)}\n")
+    return 0
+
+
+def _show_paper_list(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """List paper runs, newest first (audit lookup)."""
+    engine, _settings = _paper_engine(parser)
+    if engine is None:
+        return 2
+    try:
+        with engine.connect() as connection:
+            result = paper_list_command(
+                store=PaperRepositoryStore(connection),
+                limit=arguments.limit,
+                offset=arguments.offset,
+            )
+    except (OSError, ValueError) as error:
+        parser.error(f"Paper list failed: {error}")
+        return 2
+    sys.stdout.write(f"{json.dumps(result.to_dict(), sort_keys=True)}\n")
     return 0
 
 

@@ -39,8 +39,8 @@
 > 仅做冒烟/演示时，可用任意稳定短标识，例如 `hk-paper-demo-2026`。
 >
 > `init` 会返回 `run_id`；**建议存进 shell 变量**（下方 `RUN_ID=...`），避免手工复制出错。
-> `paper list` 子命令尚未提供，run_id 丢失时可查库：
-> `docker compose exec -T postgres psql -U harbor -d harbor -c "SELECT run_id, status, created_at FROM paper_runs ORDER BY created_at DESC;"`
+> run_id 丢失时用 `harbor-cli paper list` 找回（按创建时间倒序，默认 50 条、上限 200 条，
+> `total` / `next_offset` 说明结果是否被截断）。
 
 ```bash
 # 1) 初始化模拟盘运行，并把 run_id 存进变量（DRAFT 状态）

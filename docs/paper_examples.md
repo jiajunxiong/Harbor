@@ -44,8 +44,9 @@
 > **前置**：先激活虚拟环境 `source .venv/bin/activate`，否则会报 `harbor-cli: command not found`。
 > `--dataset-fingerprint` 是运行的可重放标识（SP 4.9），最长 64 字符、无格式校验；优先用 MVP 3 冻结
 > 数据集清单指纹（SP 3.7），冒烟/演示可用稳定短标识（如 `hk-paper-demo-2026`）。
-> **`init` 返回的 `run_id` 请存进 shell 变量**（下方 `RUN_ID=...`），不要手工复制；`paper list`
-> 子命令尚未提供，run_id 丢失时查库：`SELECT run_id, status, created_at FROM paper_runs;`
+> **`init` 返回的 `run_id` 请存进 shell 变量**（下方 `RUN_ID=...`），不要手工复制；run_id 丢失时用
+> `harbor-cli paper list` 找回（按创建时间倒序；默认 50 条、上限 200 条，`total` 与 `next_offset`
+> 会如实说明结果是否被截断）。
 
 ```bash
 # 初始化并把 run_id 存进变量（避免手工复制出错）
@@ -60,6 +61,10 @@ harbor-cli paper reconcile "$RUN_ID" --as-of 2026-01-02
 harbor-cli paper report "$RUN_ID" --format json|csv|html
 harbor-cli paper status "$RUN_ID"
 harbor-cli paper stop "$RUN_ID"
+
+# 找回已有运行（run_id 丢失时）：按创建时间倒序，默认 50 条、上限 200 条
+harbor-cli paper list --limit 20
+harbor-cli paper list --limit 20 --offset 20   # next_offset 为 null 表示已到末页
 ```
 
 ## 发布前研究边界（SP 4.83 / 4.95）
