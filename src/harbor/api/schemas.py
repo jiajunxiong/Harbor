@@ -36,6 +36,7 @@ class ApiInfo(_Schema):
     read_only: bool = True
     auth_required: bool = False
     report_formats: list[str] = Field(default_factory=list)
+    validation_report_formats: list[str] = Field(default_factory=list)
 
 
 class HealthStatus(_Schema):
@@ -107,14 +108,221 @@ class ValidationConclusion(_Schema):
     evidence: dict[str, Any] = Field(default_factory=dict)
 
 
+class ValidationArtifactCounts(_Schema):
+    """How many of each SP 3.12 artifact this run has persisted (SP 5.26)."""
+
+    trials: int = 0
+    folds: int = 0
+    stress_results: int = 0
+    warnings: int = 0
+    events: int = 0
+
+
 class ValidationRunDetail(ValidationRunSummary):
-    """A validation run plus its frozen fingerprint, conclusion and warnings."""
+    """A validation run plus its frozen fingerprint, conclusion and warnings.
+
+    ``notices`` carries the anti-misreading warnings (SP 5.35) that belong to
+    this run's state, so a dashboard cannot show a verdict without them.
+    """
 
     config_snapshot: dict[str, Any] = Field(default_factory=dict)
     dataset_fingerprint: str | None = None
+    frozen_at: datetime | None = None
     conclusion: ValidationConclusion | None = None
     warning_count: int = 0
     warnings_by_severity: dict[str, int] = Field(default_factory=dict)
+    counts: ValidationArtifactCounts = Field(default_factory=ValidationArtifactCounts)
+    notices: list[str] = Field(default_factory=list)
+
+
+class ValidationSplitView(_Schema):
+    """The frozen train / validation / test boundaries (SP 5.28)."""
+
+    split_hash: str
+    train_start: date
+    train_end: date
+    validation_start: date
+    validation_end: date
+    test_start: date
+    test_end: date
+
+
+class ValidationSplitResponse(_Schema):
+    """A run's frozen split, or the reason it cannot be shown (SP 5.28)."""
+
+    run_id: str
+    available: bool = False
+    unavailable_reason: str | None = None
+    status: str
+    split: ValidationSplitView | None = None
+    notes: list[str] = Field(default_factory=list)
+
+
+class CoverageItemView(_Schema):
+    """One coverage item measured against the stored data (SP 5.30).
+
+    ``covered``/``denominator`` are a count of real units, never a percentage
+    alone, so a coverage claim can be checked against the database.
+    """
+
+    market: str
+    item: str
+    covered: int
+    denominator: int
+    coverage_pct: float
+    severity: str | None = None
+    reason: str | None = None
+    gap: str = ""
+
+
+class ValidationCoverageResponse(_Schema):
+    """What the stored data covers for a frozen run, measured now (SP 5.30).
+
+    ``source`` says where the numbers come from. The frozen manifest records the
+    *extent* of each component and the warnings record the gate outcomes; the
+    percentages are re-measured when this endpoint is called, because the
+    measurement itself was never persisted. ``fingerprint_matches`` therefore
+    doubles as a drift check: ``false`` means the data changed after the freeze.
+    """
+
+    run_id: str
+    available: bool = False
+    unavailable_reason: str | None = None
+    source: Literal["live_measurement"] = "live_measurement"
+    measured_at: datetime
+    frozen_fingerprint: str | None = None
+    current_fingerprint: str | None = None
+    fingerprint_matches: bool | None = None
+    markets: list[str] = Field(default_factory=list)
+    items: list[CoverageItemView] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class ValidationWarningView(_Schema):
+    """One warning row recorded when the dataset was frozen (SP 3.12, SP 5.33)."""
+
+    warning_code: str
+    severity: str
+    message: str
+    context: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class ValidationWarningsResponse(_Schema):
+    """A run's recorded coverage warnings (SP 5.33)."""
+
+    run_id: str
+    warning_count: int = 0
+    warnings_by_severity: dict[str, int] = Field(default_factory=dict)
+    items: list[ValidationWarningView] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class LifecycleEventView(_Schema):
+    """One recorded validation state transition (SP 5.26, SP 5.33).
+
+    ``from_status`` is ``None`` for the creation event: the run had no
+    predecessor, and ``DRAFT -> DRAFT`` would be a fabricated transition.
+    """
+
+    from_status: str | None = None
+    to_status: str
+    reason: str | None = None
+    recorded_at: datetime
+
+
+class ValidationEventsResponse(_Schema):
+    """A run's lifecycle events, oldest first (SP 5.26, SP 5.33).
+
+    ``frozen_at`` is the moment the dataset was frozen, read from the event log:
+    the run row only keeps its last ``updated_at``, so without this the freeze
+    time would be lost.
+    """
+
+    run_id: str
+    event_count: int = 0
+    frozen_at: datetime | None = None
+    events: list[LifecycleEventView] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class ValidationTrialView(_Schema):
+    """One parameter trial (SP 5.27)."""
+
+    trial_id: str
+    parameters: list[dict[str, Any]] = Field(default_factory=list)
+    dataset_fingerprint: str
+    train_start: date
+    train_end: date
+    validation_start: date
+    validation_end: date
+    seed: int
+    code_version: str
+    metric: float | None = None
+    failed_reason: str | None = None
+    backtest_run_id: str | None = None
+
+
+class ValidationTrialsResponse(_Schema):
+    """A run's parameter trials, or why there are none (SP 5.27)."""
+
+    run_id: str
+    available: bool = False
+    unavailable_reason: str | None = None
+    trial_count: int = 0
+    trials: list[ValidationTrialView] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class ValidationFoldView(_Schema):
+    """One walk-forward fold (SP 5.29)."""
+
+    fold_index: int
+    train_start: date
+    train_end: date
+    validation_start: date
+    validation_end: date
+    test_start: date
+    test_end: date
+    retrain_date: date | None = None
+    dataset_fingerprint: str
+    backtest_run_id: str | None = None
+
+
+class ValidationFoldsResponse(_Schema):
+    """A run's out-of-sample folds, or why there are none (SP 5.29)."""
+
+    run_id: str
+    available: bool = False
+    unavailable_reason: str | None = None
+    fold_count: int = 0
+    folds: list[ValidationFoldView] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class ValidationStressView(_Schema):
+    """One stress scenario result (SP 5.31)."""
+
+    scenario_name: str
+    scenario_type: str
+    assumptions: dict[str, Any] = Field(default_factory=dict)
+    applicable_markets: list[str] = Field(default_factory=list)
+    run_fingerprint: str
+    baseline_backtest_run_id: str | None = None
+    stressed_backtest_run_id: str | None = None
+    delta: dict[str, Any] = Field(default_factory=dict)
+    notes: str | None = None
+
+
+class ValidationStressResponse(_Schema):
+    """A run's stress-scenario results, or why there are none (SP 5.31)."""
+
+    run_id: str
+    available: bool = False
+    unavailable_reason: str | None = None
+    stress_count: int = 0
+    results: list[ValidationStressView] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
 
 
 class PaperRunSummary(_Schema):

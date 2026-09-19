@@ -52,6 +52,8 @@ class _FakeConnection:
 class _FakeResult:
     """A fake statement result with one inserted row."""
 
+    rowcount = 1
+
     def fetchall(self) -> list[tuple[object, ...]]:
         return [("row",)]
 
@@ -152,10 +154,11 @@ class ValidationRunServiceTests(unittest.TestCase):
             result = run_validation_from_config(config_path, connection)
             self.assertTrue(result.run_id)
             self.assertEqual(result.status, ValidationStatus.DRAFT)
-            # The DRAFT run AND its frozen split must be persisted so that
-            # ``freeze`` can read the run back and ``report`` can render the
-            # split diagram (SP 3.12 / SP 3.71).
-            self.assertEqual(len(connection.executed), 2)
+            # The DRAFT run, its frozen split and its lifecycle event must be
+            # persisted so that ``freeze`` can read the run back, ``report`` can
+            # render the split diagram (SP 3.12 / SP 3.71) and the dashboard can
+            # show when the run was created (SP 5.26).
+            self.assertEqual(len(connection.executed), 3)
 
     def test_service_returns_distinct_run_ids(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

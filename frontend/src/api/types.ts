@@ -43,6 +43,8 @@ export interface ApiInfo {
    * can never offer a format the API would reject.
    */
   report_formats: string[];
+  /** The formats a validation report can be exported in (SP 5.34). */
+  validation_report_formats: string[];
 }
 
 export interface HealthStatus {
@@ -107,9 +109,181 @@ export interface ValidationConclusion {
 export interface ValidationRunDetail extends ValidationRunSummary {
   config_snapshot: Record<string, unknown>;
   dataset_fingerprint: string | null;
+  /** When the dataset was frozen, read from the lifecycle event log (SP 5.26). */
+  frozen_at: string | null;
   conclusion: ValidationConclusion | null;
   warning_count: number;
   warnings_by_severity: Record<string, number>;
+  counts: ValidationArtifactCounts;
+  /**
+   * Anti-misreading notices that belong to this run (SP 5.35).
+   *
+   * Rendered next to the verdict: a conclusion is only readable together with
+   * the rules about test-set reuse and re-tuning.
+   */
+  notices: string[];
+}
+
+/** How many of each artifact a validation run has persisted (SP 5.26). */
+export interface ValidationArtifactCounts {
+  trials: number;
+  folds: number;
+  stress_results: number;
+  warnings: number;
+  events: number;
+}
+
+/** The frozen train / validation / test boundaries (SP 5.28). */
+export interface ValidationSplitView {
+  split_hash: string;
+  train_start: string;
+  train_end: string;
+  validation_start: string;
+  validation_end: string;
+  test_start: string;
+  test_end: string;
+}
+
+export interface ValidationSplitResponse {
+  run_id: string;
+  available: boolean;
+  unavailable_reason: string | null;
+  status: string;
+  split: ValidationSplitView | null;
+  notes: string[];
+}
+
+/** One coverage item, with the gate verdict when the gate judged it (SP 5.30). */
+export interface CoverageItemView {
+  market: string;
+  item: string;
+  covered: number;
+  denominator: number;
+  coverage_pct: number;
+  severity: "error" | "warning" | "not_qualified" | null;
+  reason: string | null;
+  gap: string;
+}
+
+export interface ValidationCoverageResponse {
+  run_id: string;
+  available: boolean;
+  unavailable_reason: string | null;
+  /** ``live_measurement``: the percentages are measured when asked (SP 5.30). */
+  source: "live_measurement";
+  measured_at: string;
+  frozen_fingerprint: string | null;
+  current_fingerprint: string | null;
+  /** ``false`` means the data changed after the freeze. */
+  fingerprint_matches: boolean | null;
+  markets: string[];
+  items: CoverageItemView[];
+  notes: string[];
+}
+
+export interface ValidationWarningView {
+  warning_code: string;
+  severity: string;
+  message: string;
+  context: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ValidationWarningsResponse {
+  run_id: string;
+  warning_count: number;
+  warnings_by_severity: Record<string, number>;
+  items: ValidationWarningView[];
+  notes: string[];
+}
+
+/** One recorded state transition (SP 5.26). */
+export interface LifecycleEventView {
+  from_status: string | null;
+  to_status: string;
+  reason: string | null;
+  recorded_at: string;
+}
+
+export interface ValidationEventsResponse {
+  run_id: string;
+  event_count: number;
+  frozen_at: string | null;
+  events: LifecycleEventView[];
+  notes: string[];
+}
+
+/**
+ * A pipeline artifact list (SP 5.27 trials, SP 5.29 folds, SP 5.31 stress).
+ *
+ * ``available: false`` with a reason is the honest answer while the pipeline has
+ * not written the rows: an empty table would read as "measured and empty".
+ */
+export interface ValidationTrialsResponse {
+  run_id: string;
+  available: boolean;
+  unavailable_reason: string | null;
+  trial_count: number;
+  trials: ValidationTrialView[];
+  notes: string[];
+}
+
+export interface ValidationTrialView {
+  trial_id: string;
+  parameters: Record<string, unknown>[];
+  dataset_fingerprint: string;
+  train_start: string;
+  train_end: string;
+  validation_start: string;
+  validation_end: string;
+  seed: number;
+  code_version: string;
+  metric: number | null;
+  failed_reason: string | null;
+  backtest_run_id: string | null;
+}
+
+export interface ValidationFoldsResponse {
+  run_id: string;
+  available: boolean;
+  unavailable_reason: string | null;
+  fold_count: number;
+  folds: ValidationFoldView[];
+  notes: string[];
+}
+
+export interface ValidationFoldView {
+  fold_index: number;
+  train_start: string;
+  train_end: string;
+  validation_start: string;
+  validation_end: string;
+  test_start: string;
+  test_end: string;
+  retrain_date: string | null;
+  dataset_fingerprint: string;
+  backtest_run_id: string | null;
+}
+
+export interface ValidationStressResponse {
+  run_id: string;
+  available: boolean;
+  unavailable_reason: string | null;
+  stress_count: number;
+  results: ValidationStressView[];
+  notes: string[];
+}
+
+export interface ValidationStressView {
+  scenario_name: string;
+  scenario_type: string;
+  assumptions: Record<string, unknown>;
+  applicable_markets: string[];
+  run_fingerprint: string;
+  baseline_backtest_run_id: string | null;
+  stressed_backtest_run_id: string | null;
+  delta: Record<string, unknown>;
+  notes: string | null;
 }
 
 export interface PaperRunSummary {

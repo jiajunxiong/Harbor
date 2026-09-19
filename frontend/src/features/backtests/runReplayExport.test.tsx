@@ -326,6 +326,19 @@ describe("comparison page (SP 5.23)", () => {
 
     const notes = await screen.findByTestId("comparison-notes");
     expect(notes.textContent).toContain("没有汇率表");
+    expect(notes.textContent).toContain("单指标最优不等于策略更优");
+    // The server's caveats are shown once, not once per voice.
+    const items = notes.querySelectorAll("li");
+    expect(items).toHaveLength(3);
+  });
+
+  it("falls back to its own caveats when the server sends none", async () => {
+    stubApi({ comparison: comparisonResponse({ notes: [] }) });
+    renderWithProviders(
+      <RunComparisonPage runIds={["bt-0001", "bt-0002"]} onOpenRun={() => undefined} onBack={() => undefined} />,
+    );
+
+    const notes = await screen.findByTestId("comparison-notes");
     expect(notes.textContent).toContain("不代表策略更优");
   });
 

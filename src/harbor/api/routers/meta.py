@@ -25,6 +25,7 @@ from harbor.api.deps import get_optional_engine, get_settings
 from harbor.api.schemas import API_NAME, API_VERSION, ApiInfo, HealthStatus
 from harbor.api.security import require_readonly
 from harbor.services.backtest import REPORT_FORMATS
+from harbor.services.validation import VALIDATION_REPORT_FORMATS
 
 router = APIRouter(tags=["meta"], dependencies=[Depends(require_readonly)])
 health_router = APIRouter(tags=["meta"])
@@ -64,7 +65,7 @@ def read_version(settings: ApiSettings = Depends(get_settings)) -> ApiInfo:
 
     The downloadable report formats are published here so the dashboard builds
     its download links from what this API actually renders instead of from a
-    hardcoded list that could drift (SP 5.22).
+    hardcoded list that could drift (SP 5.22 / SP 5.34).
     """
     return ApiInfo(
         name=API_NAME,
@@ -73,4 +74,5 @@ def read_version(settings: ApiSettings = Depends(get_settings)) -> ApiInfo:
         read_only=True,
         auth_required=settings.auth_required,
         report_formats=list(REPORT_FORMATS),
+        validation_report_formats=list(VALIDATION_REPORT_FORMATS),
     )

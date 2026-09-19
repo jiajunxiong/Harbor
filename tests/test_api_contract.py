@@ -33,7 +33,16 @@ from harbor.api.deps import get_read_store
 from harbor.api.errors import PROBLEM_MEDIA_TYPE
 from harbor.api.redaction import redact_document
 from harbor.api.schemas import API_VERSION
+from harbor.core.backtest_domain import Currency, Market
 from harbor.core.consistency_check import ConsistencyIssue
+from harbor.core.coverage_gate import CoverageGateResult, CoverageThresholdResult
+from harbor.core.coverage_scoring import (
+    CoverageMeasurement,
+    CoverageScore,
+    MarketCoverage,
+)
+from harbor.core.validation_config import CoverageSeverity
+from harbor.core.validation_domain import ManifestComponent
 from harbor.services.backtest import REPORT_FORMATS, REPORT_MEDIA_TYPES, RenderedReport
 from harbor.services.backtest_replay import (
     BacktestReplayError,
@@ -41,6 +50,7 @@ from harbor.services.backtest_replay import (
     ReplayConsistency,
     SiblingConsistency,
 )
+from harbor.services.validation_dataset import DatasetProfile
 
 TOKEN = "read-token"
 OPS_TOKEN = "ops-token"
@@ -137,6 +147,170 @@ def conclusion_row() -> dict[str, Any]:
         "limitations": [{"code": "single_regime", "detail": "One regime only."}],
         "evidence": {"sharpe": 0.9},
     }
+
+
+def validation_split_row() -> dict[str, Any]:
+    """A frozen split row shaped like the persisted columns (SP 5.28)."""
+    return {
+        "split_hash": "split-hash-1",
+        "train_start": date(2019, 1, 1),
+        "train_end": date(2021, 12, 31),
+        "validation_start": date(2022, 1, 1),
+        "validation_end": date(2022, 6, 30),
+        "test_start": date(2022, 7, 1),
+        "test_end": date(2022, 12, 31),
+    }
+
+
+def validation_warning_row() -> dict[str, Any]:
+    """One recorded coverage warning (SP 5.33)."""
+    return {
+        "warning_code": "coverage.prices",
+        "severity": "error",
+        "message": "248 个交易日缺少行情数据",
+        "context": {"market": "HK", "item": "prices"},
+        "created_at": datetime(2026, 2, 1, 1, tzinfo=timezone.utc),
+    }
+
+
+def validation_event_rows() -> list[dict[str, Any]]:
+    """A run's lifecycle: creation, then the freeze (SP 5.26)."""
+    return [
+        {
+            "from_status": None,
+            "to_status": "DRAFT",
+            "reason": "validation run created",
+            "recorded_at": datetime(2026, 2, 1, tzinfo=timezone.utc),
+        },
+        {
+            "from_status": "DRAFT",
+            "to_status": "DATA_FROZEN",
+            "reason": "validation freeze",
+            "recorded_at": datetime(2026, 2, 1, 1, tzinfo=timezone.utc),
+        },
+    ]
+
+
+def validation_trial_row() -> dict[str, Any]:
+    """One parameter trial (SP 5.27)."""
+    return {
+        "trial_id": "trial-1",
+        "parameters": [{"name": "top_n", "value": 10}],
+        "dataset_fingerprint": "fp-oos-1",
+        "train_start": date(2019, 1, 1),
+        "train_end": date(2021, 12, 31),
+        "validation_start": date(2022, 1, 1),
+        "validation_end": date(2022, 6, 30),
+        "seed": 42,
+        "code_version": "abc1234",
+        "metric": 0.83,
+        "failed_reason": None,
+        "backtest_run_id": BACKTEST_RUN_ID,
+    }
+
+
+def validation_fold_row() -> dict[str, Any]:
+    """One walk-forward fold (SP 5.29)."""
+    return {
+        "fold_index": 0,
+        "train_start": date(2019, 1, 1),
+        "train_end": date(2020, 12, 31),
+        "validation_start": date(2021, 1, 1),
+        "validation_end": date(2021, 6, 30),
+        "test_start": date(2021, 7, 1),
+        "test_end": date(2021, 12, 31),
+        "retrain_date": None,
+        "dataset_fingerprint": "fp-oos-1",
+        "backtest_run_id": BACKTEST_RUN_ID,
+    }
+
+
+def validation_stress_row() -> dict[str, Any]:
+    """One stress-scenario result (SP 5.31)."""
+    return {
+        "scenario_name": "hk_rate_shock",
+        "scenario_type": "rate_shock",
+        "assumptions": {"bps": 200},
+        "applicable_markets": ["HK"],
+        "run_fingerprint": "fp-stress-1",
+        "baseline_backtest_run_id": BACKTEST_RUN_ID,
+        "stressed_backtest_run_id": "bt-run-2",
+        "delta": {"net_value_impact_pct": -4.5},
+        "notes": "Assumes an instant parallel shift.",
+    }
+
+
+def coverage_profile() -> DatasetProfile:
+    """A two-market profile with one failing and one passing item per market.
+
+    Built by hand rather than measured so the contract test can assert the shape
+    a dashboard depends on: per-market items stay separate, a failing item keeps
+    its severity and gate reason, and a passing item keeps ``severity=None``.
+    """
+    hk_scores = (
+        CoverageScore(
+            market=Market.HK,
+            item=ManifestComponent.PRICES,
+            measurement=CoverageMeasurement(
+                covered=186, denominator=248, gap="62 个交易日缺少行情数据"
+            ),
+        ),
+        CoverageScore(
+            market=Market.HK,
+            item=ManifestComponent.STOCK_POOL,
+            measurement=CoverageMeasurement(covered=89, denominator=89),
+        ),
+    )
+    us_scores = (
+        CoverageScore(
+            market=Market.US,
+            item=ManifestComponent.PRICES,
+            measurement=CoverageMeasurement(covered=250, denominator=250),
+        ),
+    )
+    return DatasetProfile(
+        window_start=date(2019, 1, 1),
+        window_end=date(2022, 12, 31),
+        data_cutoff=date(2022, 12, 31),
+        markets=(Market.HK, Market.US),
+        base_currency=Currency.HKD,
+        coverage=(
+            MarketCoverage(market=Market.HK, scores=hk_scores),
+            MarketCoverage(market=Market.US, scores=us_scores),
+        ),
+        gates=(
+            CoverageGateResult(
+                market=Market.HK,
+                results=(
+                    CoverageThresholdResult(
+                        market=Market.HK,
+                        item=ManifestComponent.PRICES,
+                        coverage_pct=75.0,
+                        severity=CoverageSeverity.ERROR,
+                        reason="price coverage 75.0% below threshold 95.0%",
+                    ),
+                    CoverageThresholdResult(
+                        market=Market.HK,
+                        item=ManifestComponent.STOCK_POOL,
+                        coverage_pct=100.0,
+                    ),
+                ),
+            ),
+            CoverageGateResult(
+                market=Market.US,
+                results=(
+                    CoverageThresholdResult(
+                        market=Market.US,
+                        item=ManifestComponent.PRICES,
+                        coverage_pct=100.0,
+                    ),
+                ),
+            ),
+        ),
+        components=(),
+        fingerprint="fp-oos-1",
+        calendar_version="1.0.0",
+    )
 
 
 def paper_row() -> dict[str, Any]:
@@ -293,6 +467,12 @@ class FakeReadStore:
         self.replay_error: str | None = None
         self.fills = [fill_row(), fill_row(market="US", symbol="AAPL")]
         self.rejected = [rejected_row(), rejected_row(symbol="0003.HK", reason="no cash")]
+        # Stage 3 artifacts default to their *recorded* shape: one trial, one
+        # fold and one stress scenario, so a test can also prove the empty
+        # answers by clearing them.
+        self.validation_trials = [validation_trial_row()]
+        self.validation_folds = [validation_fold_row()]
+        self.validation_stress = [validation_stress_row()]
         self.calls: list[str] = []
         self.explode = False
 
@@ -478,6 +658,53 @@ class FakeReadStore:
     def validation_warning_stats(self, run_id: str) -> tuple[int, dict[str, int]]:
         self._record("validation_warning_stats")
         return 3, {"high": 1, "medium": 2}
+
+    def get_validation_split(self, run_id: str) -> dict[str, Any] | None:
+        self._record("get_validation_split")
+        return validation_split_row()
+
+    def list_validation_warnings(self, run_id: str) -> list[dict[str, Any]]:
+        self._record("list_validation_warnings")
+        return [validation_warning_row()]
+
+    def list_validation_events(self, run_id: str) -> list[dict[str, Any]]:
+        self._record("list_validation_events")
+        return validation_event_rows()
+
+    def validation_artifact_counts(self, run_id: str) -> dict[str, int]:
+        self._record("validation_artifact_counts")
+        return {
+            "trials": len(self.validation_trials),
+            "folds": len(self.validation_folds),
+            "stress_results": len(self.validation_stress),
+            "warnings": 1,
+            "events": 2,
+        }
+
+    def list_validation_trials(self, run_id: str) -> list[dict[str, Any]]:
+        self._record("list_validation_trials")
+        return list(self.validation_trials)
+
+    def list_validation_folds(self, run_id: str) -> list[dict[str, Any]]:
+        self._record("list_validation_folds")
+        return list(self.validation_folds)
+
+    def list_validation_stress(self, run_id: str) -> list[dict[str, Any]]:
+        self._record("list_validation_stress")
+        return list(self.validation_stress)
+
+    def validation_dataset_profile(self, run_id: str) -> DatasetProfile | None:
+        self._record("validation_dataset_profile")
+        return coverage_profile()
+
+    def render_validation_report(self, run_id: str, report_format: str) -> RenderedReport:
+        self._record("render_validation_report")
+        return RenderedReport(
+            report_format=report_format,
+            content=f"validation-report:{report_format}:{run_id}",
+            media_type=REPORT_MEDIA_TYPES[report_format],
+            filename=f"harbor-validation-{run_id}.{report_format}",
+        )
 
     # -- paper -----------------------------------------------------------
 
@@ -807,6 +1034,171 @@ class CollectionPayloadTests(ApiContractTestCase):
                 )
                 self.assertEqual(response.status_code, 404)
                 self.assertEqual(response.json()["code"], code)
+
+
+class Stage3ValidationTests(ApiContractTestCase):
+    """SP 5.26–SP 5.35 — the validation dashboard's data, gaps included."""
+
+    def _get(self, path: str) -> Any:
+        response = self.auth_call("GET", f"/api/{API_VERSION}/validations/val-1{path}")
+        self.assertEqual(response.status_code, 200)
+        return response.json()
+
+    def test_detail_carries_the_freeze_time_and_the_misreading_notices(self) -> None:
+        detail = self._get("")
+
+        # The freeze time comes from the event log: the run row keeps only its
+        # last updated_at, so a dashboard could not otherwise date the freeze.
+        self.assertEqual(detail["frozen_at"], "2026-02-01T01:00:00Z")
+        self.assertEqual(detail["counts"]["events"], 2)
+        self.assertEqual(detail["counts"]["warnings"], 1)
+        notices = " ".join(detail["notices"])
+        self.assertIn("测试集只解锁一次", notices)
+        self.assertIn("不算通过", notices)
+
+    def test_frozen_split_is_served_with_its_hash(self) -> None:
+        body = self._get("/split")
+
+        self.assertTrue(body["available"])
+        self.assertEqual(body["split"]["split_hash"], "split-hash-1")
+        self.assertEqual(body["split"]["test_start"], "2022-07-01")
+        self.assertEqual(body["split"]["test_end"], "2022-12-31")
+        # The test set is already unlocked for this run, which a reader must know
+        # before proposing another tuning pass.
+        self.assertTrue(any("test_set_id" in note for note in body["notes"]))
+
+    def test_coverage_keeps_markets_separate_and_names_the_gate_verdict(self) -> None:
+        body = self._get("/coverage")
+
+        self.assertTrue(body["available"])
+        self.assertEqual(body["markets"], ["HK", "US"])
+        self.assertEqual(body["frozen_fingerprint"], "fp-oos-1")
+        self.assertEqual(body["current_fingerprint"], "fp-oos-1")
+        # Identical fingerprints: the stored data still matches the freeze.
+        self.assertTrue(body["fingerprint_matches"])
+        hk_prices = next(
+            item for item in body["items"] if item["market"] == "HK" and item["item"] == "prices"
+        )
+        self.assertEqual(hk_prices["covered"], 186)
+        self.assertEqual(hk_prices["denominator"], 248)
+        self.assertEqual(hk_prices["severity"], "error")
+        self.assertIn("below threshold", hk_prices["reason"])
+        self.assertIn("缺少行情数据", hk_prices["gap"])
+        # A market that passed must not inherit the other market's failure.
+        us_prices = next(
+            item for item in body["items"] if item["market"] == "US" and item["item"] == "prices"
+        )
+        self.assertIsNone(us_prices["severity"])
+        self.assertEqual(us_prices["coverage_pct"], 100.0)
+
+    def test_warnings_record_the_measured_gap_and_the_silence_rule(self) -> None:
+        body = self._get("/warnings")
+
+        self.assertEqual(body["warning_count"], 1)
+        self.assertEqual(body["warnings_by_severity"], {"high": 1, "medium": 2})
+        self.assertEqual(body["items"][0]["context"]["market"], "HK")
+        # Absence of a warning is not evidence of coverage; the note says so.
+        self.assertIn("不等于", " ".join(body["notes"]))
+
+    def test_events_are_chronological_and_the_creation_has_no_predecessor(self) -> None:
+        body = self._get("/events")
+
+        self.assertEqual(body["event_count"], 2)
+        self.assertIsNone(body["events"][0]["from_status"])
+        self.assertEqual(body["events"][0]["to_status"], "DRAFT")
+        self.assertEqual(body["events"][1]["from_status"], "DRAFT")
+        self.assertEqual(body["events"][1]["to_status"], "DATA_FROZEN")
+        self.assertEqual(body["frozen_at"], "2026-02-01T01:00:00Z")
+
+    def test_the_four_unwritten_artifacts_answer_with_a_reason_not_a_zero(self) -> None:
+        # The default fake store has one of each, so the lists render real rows.
+        trials = self._get("/trials")
+        self.assertTrue(trials["available"])
+        self.assertEqual(trials["trial_count"], 1)
+        self.assertEqual(trials["trials"][0]["seed"], 42)
+        self.assertIsNone(trials["unavailable_reason"])
+
+        folds = self._get("/folds")
+        self.assertEqual(folds["folds"][0]["fold_index"], 0)
+
+        stress = self._get("/stress")
+        self.assertEqual(stress["results"][0]["scenario_name"], "hk_rate_shock")
+        self.assertEqual(stress["results"][0]["assumptions"], {"bps": 200})
+
+    def test_an_empty_artifact_list_never_looks_like_a_measurement(self) -> None:
+        store = FakeReadStore()
+        store.validation_trials = []
+        store.validation_folds = []
+        store.validation_stress = []
+        app = create_app(make_settings())
+        app.dependency_overrides[get_read_store] = lambda: store
+
+        for path, key in (("/trials", "trials"), ("/folds", "folds"), ("/stress", "results")):
+            with self.subTest(path=path):
+                body = call(
+                    app,
+                    "GET",
+                    f"/api/{API_VERSION}/validations/val-1{path}",
+                    headers={"Authorization": f"Bearer {TOKEN}"},
+                ).json()
+                self.assertFalse(body["available"])
+                self.assertEqual(body[key], [])
+                self.assertIn("尚无调用方", body["unavailable_reason"])
+
+    def test_the_report_download_uses_the_cli_renderer_and_safe_filenames(self) -> None:
+        for report_format, media_type in REPORT_MEDIA_TYPES.items():
+            with self.subTest(report_format=report_format):
+                response = self.auth_call(
+                    "GET",
+                    f"/api/{API_VERSION}/validations/val-1/report?format={report_format}",
+                )
+                self.assertEqual(response.status_code, 200)
+                # Starlette appends the charset, so the media type is a prefix.
+                self.assertTrue(response.headers["content-type"].startswith(media_type))
+                self.assertEqual(response.text, f"validation-report:{report_format}:val-1")
+                self.assertIn(
+                    f'filename="harbor-validation-val-1.{report_format}"',
+                    response.headers["content-disposition"],
+                )
+
+    def test_an_unsupported_report_format_is_refused_before_rendering(self) -> None:
+        store = FakeReadStore()
+        app = create_app(make_settings())
+        app.dependency_overrides[get_read_store] = lambda: store
+
+        response = call(
+            app,
+            "GET",
+            f"/api/{API_VERSION}/validations/val-1/report?format=pdf",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["code"], "invalid_report_format")
+        self.assertNotIn("render_validation_report", store.calls)
+
+    def test_version_publishes_the_validation_report_formats(self) -> None:
+        body = self.auth_call("GET", f"/api/{API_VERSION}/version").json()
+
+        self.assertEqual(body["validation_report_formats"], list(REPORT_FORMATS))
+
+    def test_every_stage_3_route_is_documented_as_read_only(self) -> None:
+        paths = self.app.openapi()["paths"]
+
+        for suffix in (
+            "/split",
+            "/coverage",
+            "/warnings",
+            "/events",
+            "/trials",
+            "/folds",
+            "/stress",
+            "/report",
+        ):
+            with self.subTest(suffix=suffix):
+                path = f"/api/{API_VERSION}/validations/{{run_id}}{suffix}"
+                self.assertIn(path, paths)
+                self.assertEqual(set(paths[path]), {"get"})
 
 
 class RedactionTests(unittest.TestCase):

@@ -92,6 +92,22 @@ export function formatSignedPercent(value: number | null | undefined, places = 2
   return rendered;
 }
 
+/**
+ * Render a value that is **already** a percentage.
+ *
+ * `formatPercent` takes a fraction and multiplies by 100, so handing it a value
+ * from a field named `*_pct` inflates every number by two orders of magnitude:
+ * a measured 74.92% coverage silently becomes 7492.42%. The API publishes both
+ * shapes — `coverage_pct` and `net_value_impact_pct` are percentages, returns
+ * are fractions — so the two renderers are kept explicitly apart.
+ */
+export function formatPercentValue(value: number | null | undefined, places = 2): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return EMPTY_VALUE;
+  }
+  return `${value.toFixed(places)}%`;
+}
+
 /** Render a dimensionless ratio (Sharpe, Calmar) to a fixed number of places. */
 export function formatRatio(value: number | null | undefined, places = 2): string {
   if (value === null || value === undefined || !Number.isFinite(value)) {

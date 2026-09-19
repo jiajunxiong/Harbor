@@ -26,8 +26,15 @@ import type {
   QualitySummary,
   RejectedTradeResponse,
   RunQuery,
+  ValidationCoverageResponse,
+  ValidationEventsResponse,
+  ValidationFoldsResponse,
   ValidationRunDetail,
   ValidationRunSummary,
+  ValidationSplitResponse,
+  ValidationStressResponse,
+  ValidationTrialsResponse,
+  ValidationWarningsResponse,
 } from "./types";
 
 /** Re-exported so callers can keep importing the paging shape from here. */
@@ -222,4 +229,104 @@ export function fetchComparison(
 ): Promise<BacktestComparisonResponse> {
   const search = buildQuery({ run_ids: runIds.join(",") });
   return getJson<BacktestComparisonResponse>(`/backtests/compare${search}`, options);
+}
+
+/* -- Stage 3: the out-of-sample validation dashboard (SP 5.26-5.34) ----- */
+
+/**
+ * A run's frozen split (SP 5.28).
+ *
+ * Answered as ``available: false`` plus a reason when the run has no split row,
+ * rather than as an error a reader cannot act on.
+ */
+export function fetchValidationSplit(
+  runId: string,
+  options?: { signal?: AbortSignal },
+): Promise<ValidationSplitResponse> {
+  return getJson<ValidationSplitResponse>(
+    `/validations/${encodeURIComponent(runId)}/split`,
+    options,
+  );
+}
+
+/** What the stored data covers for a frozen run, measured server-side (SP 5.30). */
+export function fetchValidationCoverage(
+  runId: string,
+  options?: { signal?: AbortSignal },
+): Promise<ValidationCoverageResponse> {
+  return getJson<ValidationCoverageResponse>(
+    `/validations/${encodeURIComponent(runId)}/coverage`,
+    options,
+  );
+}
+
+/** A run's recorded coverage warnings (SP 5.33). */
+export function fetchValidationWarnings(
+  runId: string,
+  options?: { signal?: AbortSignal },
+): Promise<ValidationWarningsResponse> {
+  return getJson<ValidationWarningsResponse>(
+    `/validations/${encodeURIComponent(runId)}/warnings`,
+    options,
+  );
+}
+
+/** A run's lifecycle events, oldest first (SP 5.26, SP 5.33). */
+export function fetchValidationEvents(
+  runId: string,
+  options?: { signal?: AbortSignal },
+): Promise<ValidationEventsResponse> {
+  return getJson<ValidationEventsResponse>(
+    `/validations/${encodeURIComponent(runId)}/events`,
+    options,
+  );
+}
+
+/** A run's parameter trials (SP 5.27). */
+export function fetchValidationTrials(
+  runId: string,
+  options?: { signal?: AbortSignal },
+): Promise<ValidationTrialsResponse> {
+  return getJson<ValidationTrialsResponse>(
+    `/validations/${encodeURIComponent(runId)}/trials`,
+    options,
+  );
+}
+
+/** A run's walk-forward folds (SP 5.29). */
+export function fetchValidationFolds(
+  runId: string,
+  options?: { signal?: AbortSignal },
+): Promise<ValidationFoldsResponse> {
+  return getJson<ValidationFoldsResponse>(
+    `/validations/${encodeURIComponent(runId)}/folds`,
+    options,
+  );
+}
+
+/** A run's stress-scenario results (SP 5.31). */
+export function fetchValidationStress(
+  runId: string,
+  options?: { signal?: AbortSignal },
+): Promise<ValidationStressResponse> {
+  return getJson<ValidationStressResponse>(
+    `/validations/${encodeURIComponent(runId)}/stress`,
+    options,
+  );
+}
+
+/**
+ * Download a validation run's server-rendered report (SP 5.34).
+ *
+ * Fetched as a file rather than linked as a URL so the request carries the
+ * Authorization header: the report is rendered on the server and the token never
+ * ends up in a link.
+ */
+export function downloadValidationReport(
+  runId: string,
+  reportFormat: string,
+  options?: { signal?: AbortSignal },
+): Promise<DownloadedFile> {
+  const search = buildQuery({ format: reportFormat });
+  return getFile(`/validations/${encodeURIComponent(runId)}/report${search}`, options);
 }

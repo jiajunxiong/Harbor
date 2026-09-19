@@ -21,6 +21,15 @@ import {
   fetchNetValues,
   fetchRejectedTrades,
   fetchReplay,
+  fetchValidationCoverage,
+  fetchValidationEvents,
+  fetchValidationFolds,
+  fetchValidationRun,
+  fetchValidationRuns,
+  fetchValidationSplit,
+  fetchValidationStress,
+  fetchValidationTrials,
+  fetchValidationWarnings,
   type TradeQuery,
 } from "./endpoints";
 import type {
@@ -36,8 +45,18 @@ import type {
   HealthStatus,
   NetValueSeries,
   Page,
+  PageQuery,
   RejectedTradeResponse,
   RunQuery,
+  ValidationCoverageResponse,
+  ValidationEventsResponse,
+  ValidationFoldsResponse,
+  ValidationRunDetail,
+  ValidationRunSummary,
+  ValidationSplitResponse,
+  ValidationStressResponse,
+  ValidationTrialsResponse,
+  ValidationWarningsResponse,
 } from "./types";
 
 export const queryKeys = {
@@ -57,6 +76,15 @@ export const queryKeys = {
     ["backtests", "rejected-trades", runId, query] as const,
   replay: (runId: string) => ["backtests", "replay", runId] as const,
   comparison: (runIds: readonly string[]) => ["backtests", "comparison", runIds] as const,
+  validationRuns: (query: PageQuery) => ["validations", "list", query] as const,
+  validationRun: (runId: string) => ["validations", "detail", runId] as const,
+  validationSplit: (runId: string) => ["validations", "split", runId] as const,
+  validationCoverage: (runId: string) => ["validations", "coverage", runId] as const,
+  validationWarnings: (runId: string) => ["validations", "warnings", runId] as const,
+  validationEvents: (runId: string) => ["validations", "events", runId] as const,
+  validationTrials: (runId: string) => ["validations", "trials", runId] as const,
+  validationFolds: (runId: string) => ["validations", "folds", runId] as const,
+  validationStress: (runId: string) => ["validations", "stress", runId] as const,
 };
 
 export function useApiInfo(): UseQueryResult<ApiInfo, Error> {
@@ -173,5 +201,108 @@ export function useComparison(runIds: readonly string[]): UseQueryResult<
     queryKey: queryKeys.comparison(ordered),
     queryFn: ({ signal }) => fetchComparison(ordered, { signal }),
     enabled: ordered.length >= 2,
+  });
+}
+
+/* -- Stage 3: the out-of-sample validation dashboard (SP 5.26-5.34) ----- */
+
+/** One page of validation runs (SP 5.26). */
+export function useValidationRuns(
+  query: PageQuery = {},
+): UseQueryResult<Page<ValidationRunSummary>, Error> {
+  return useQuery({
+    queryKey: queryKeys.validationRuns(query),
+    queryFn: ({ signal }) => fetchValidationRuns(query, { signal }),
+    placeholderData: (previous) => previous,
+  });
+}
+export function useValidationRun(runId: string | null): UseQueryResult<ValidationRunDetail, Error> {
+  return useQuery({
+    queryKey: queryKeys.validationRun(runId ?? ""),
+    queryFn: ({ signal }) => fetchValidationRun(runId as string, { signal }),
+    enabled: runId !== null && runId !== "",
+  });
+}
+
+/** A run's frozen split (SP 5.28). */
+export function useValidationSplit(
+  runId: string | null,
+): UseQueryResult<ValidationSplitResponse, Error> {
+  return useQuery({
+    queryKey: queryKeys.validationSplit(runId ?? ""),
+    queryFn: ({ signal }) => fetchValidationSplit(runId as string, { signal }),
+    enabled: runId !== null && runId !== "",
+  });
+}
+
+/**
+ * A run's measured coverage (SP 5.30).
+ *
+ * Not cached beyond the default, because the numbers are measured at request
+ * time: a stale percentage would be a claim about data that may have changed.
+ */
+export function useValidationCoverage(
+  runId: string | null,
+): UseQueryResult<ValidationCoverageResponse, Error> {
+  return useQuery({
+    queryKey: queryKeys.validationCoverage(runId ?? ""),
+    queryFn: ({ signal }) => fetchValidationCoverage(runId as string, { signal }),
+    enabled: runId !== null && runId !== "",
+    staleTime: 0,
+  });
+}
+
+/** A run's recorded coverage warnings (SP 5.33). */
+export function useValidationWarnings(
+  runId: string | null,
+): UseQueryResult<ValidationWarningsResponse, Error> {
+  return useQuery({
+    queryKey: queryKeys.validationWarnings(runId ?? ""),
+    queryFn: ({ signal }) => fetchValidationWarnings(runId as string, { signal }),
+    enabled: runId !== null && runId !== "",
+  });
+}
+
+/** A run's lifecycle events (SP 5.26 / SP 5.33). */
+export function useValidationEvents(
+  runId: string | null,
+): UseQueryResult<ValidationEventsResponse, Error> {
+  return useQuery({
+    queryKey: queryKeys.validationEvents(runId ?? ""),
+    queryFn: ({ signal }) => fetchValidationEvents(runId as string, { signal }),
+    enabled: runId !== null && runId !== "",
+  });
+}
+
+/** A run's parameter trials (SP 5.27). */
+export function useValidationTrials(
+  runId: string | null,
+): UseQueryResult<ValidationTrialsResponse, Error> {
+  return useQuery({
+    queryKey: queryKeys.validationTrials(runId ?? ""),
+    queryFn: ({ signal }) => fetchValidationTrials(runId as string, { signal }),
+    enabled: runId !== null && runId !== "",
+  });
+}
+
+/** A run's walk-forward folds (SP 5.29). */
+export function useValidationFolds(
+  runId: string | null,
+): UseQueryResult<ValidationFoldsResponse, Error> {
+  return useQuery({
+    queryKey: queryKeys.validationFolds(runId ?? ""),
+    queryFn: ({ signal }) => fetchValidationFolds(runId as string, { signal }),
+    enabled: runId !== null && runId !== "",
+  });
+}
+
+/** A run's stress-scenario results (SP 5.31). */
+export function useValidationStress(
+  runId: string | null,
+): UseQueryResult<ValidationStressResponse, Error> {
+  return useQuery({
+    queryKey: queryKeys.validationStress(runId ?? ""),
+    queryFn: ({ signal }) => fetchValidationStress(runId as string, { signal }),
+    enabled: runId !== null && runId !== "",
   });
 }

@@ -46,6 +46,7 @@ from harbor.core.run_identity import identity_from_config
 from harbor.core.run_logging import RunLogContext, log_run_event
 from harbor.core.stock_pool import StockPool
 from harbor.core.trading_calendar import MarketTradingCalendar
+from harbor.services import report_export
 from harbor.storage.backtest_data_reader import StorageBacktestDataReader
 from harbor.storage.backtest_repositories import BacktestRepository
 
@@ -658,7 +659,10 @@ class BacktestReportError(ValueError):
 
 #: The report formats that can be rendered (SP 2.69). Public so the read API can
 #: validate against the same tuple the renderer accepts instead of duplicating it.
-REPORT_FORMATS = ("json", "csv", "html")
+#:
+#: Shared with the validation report (SP 5.34) so the two exports cannot offer
+#: different format lists.
+REPORT_FORMATS = report_export.REPORT_FORMATS
 
 
 def build_report_artifact(*, connection: Connection, run_id: str) -> dict[str, Any]:
@@ -838,34 +842,19 @@ def report_backtest(*, connection: Connection, run_id: str, report_format: str) 
 
 
 #: Media types for the three report formats (MVP 5 / SP 5.22).
-REPORT_MEDIA_TYPES = {
-    "json": "application/json",
-    "csv": "text/csv",
-    "html": "text/html",
-}
+REPORT_MEDIA_TYPES = report_export.REPORT_MEDIA_TYPES
 
-
-@dataclass(frozen=True)
-class RenderedReport:
-    """A rendered report plus the headers needed to serve it as a download."""
-
-    report_format: str
-    content: str
-    media_type: str
-    filename: str
+#: A rendered report plus the headers needed to serve it as a download.
+RenderedReport = report_export.RenderedReport
 
 
 def _safe_filename_part(value: str) -> str:
     """Reduce a run id to characters that are safe inside a filename.
 
-    A run id is caller-supplied, and the filename ends up in a
-    ``Content-Disposition`` header: a path separator or a quote there could
-    change the header's meaning, so anything outside a conservative set is
-    replaced rather than escaped.
+    Kept as a thin alias for the shared implementation so the Stage 2 callers of
+    this private name keep working while there is exactly one sanitiser.
     """
-    safe = [character if character.isalnum() or character in "-_." else "_" for character in value]
-    collapsed = "".join(safe).strip("._")
-    return collapsed or "run"
+    return report_export.safe_filename_part(value)
 
 
 def render_backtest_report(

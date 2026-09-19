@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { EMPTY_VALUE, formatCount, formatDateOnly, formatTimestamp, shortenId } from "./format";
+import {
+  EMPTY_VALUE,
+  formatCount,
+  formatDateOnly,
+  formatPercent,
+  formatPercentValue,
+  formatTimestamp,
+  shortenId,
+} from "./format";
 
 describe("formatDateOnly", () => {
   it("never timezone-shifts a calendar date", () => {
@@ -45,5 +53,29 @@ describe("shortenId", () => {
 
   it("truncates long identifiers", () => {
     expect(shortenId("a".repeat(40))).toBe(`${"a".repeat(10)}…`);
+  });
+});
+
+describe("formatPercentValue (SP 5.30)", () => {
+  it("renders an already-percentage value without scaling it again", () => {
+    // The bug this guards: formatPercent multiplies by 100, so a measured 74.92%
+    // coverage rendered as 7492.42% — a number nobody could read as plausible
+    // but a number a reader would still trust.
+    expect(formatPercentValue(74.92416582406472)).toBe("74.92%");
+    expect(formatPercentValue(100)).toBe("100.00%");
+    expect(formatPercentValue(0)).toBe("0.00%");
+  });
+
+  it("keeps the two renderers distinct for the same input", () => {
+    expect(formatPercent(0.7492)).toBe("74.92%");
+    expect(formatPercentValue(74.92)).toBe("74.92%");
+    // Same displayed value, different inputs: mixing them up is the defect.
+    expect(formatPercentValue(0.7492)).toBe("0.75%");
+  });
+
+  it("shows the placeholder for a missing measurement", () => {
+    expect(formatPercentValue(null)).toBe(EMPTY_VALUE);
+    expect(formatPercentValue(undefined)).toBe(EMPTY_VALUE);
+    expect(formatPercentValue(Number.NaN)).toBe(EMPTY_VALUE);
   });
 });

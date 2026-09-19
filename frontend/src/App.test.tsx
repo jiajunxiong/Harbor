@@ -8,7 +8,7 @@
  */
 
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import {
@@ -81,6 +81,13 @@ const TWO_RUNS = [
 ];
 
 describe("dashboard smoke test", () => {
+  beforeEach(() => {
+    // The route lives in the URL, so a test that navigates would otherwise leak
+    // its location into the next render — the next `render(<App />)` would open
+    // whatever page the previous test left behind.
+    window.location.hash = "";
+  });
+
   it("renders the disclaimer before anything a reader might act on", async () => {
     stubApi({ runs: TWO_RUNS });
     render(<App />);
@@ -244,7 +251,7 @@ describe("dashboard smoke test", () => {
     fireEvent.click(screen.getByTestId("compare-selected"));
 
     expect(window.location.hash).toBe("#/runs/compare?ids=bt-0001%2Cbt-0002");
-    expect(await screen.findByText("多运行对比")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "多运行对比" })).toBeInTheDocument();
   });
 
   it("cannot compare a single run", async () => {

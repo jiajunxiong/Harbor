@@ -687,3 +687,66 @@ details > summary {
   white-space: nowrap;
   border: 0;
 }
+
+/* -- MVP 5 Stage 3: the validation dashboard (SP 5.26-SP 5.35) ----------- */
+
+/* A value that is *absent* rather than zero. Kept visually quieter than real
+ * data so "未冻结" cannot be mistaken for a measurement. */
+.muted {
+  color: var(--color-text-muted);
+}
+
+/* The verdict block: the label is deliberately not styled like a metric, and
+ * the hint sits directly underneath it because the conclusion is only readable
+ * together with what it does not say (SP 5.32 / SP 5.35). */
+.verdict {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--color-info-subtle);
+}
+
+.verdict--inconclusive {
+  background: var(--color-warn-subtle);
+}
+
+.verdict__label {
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.verdict__hint {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* The lifecycle timeline: one row per transition, oldest first. */
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding-left: var(--space-5);
+  font-size: var(--text-sm);
+}
+
+.timeline li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: baseline;
+}
+
+/* Inline list of notes that belong to a panel (SP 5.35). */
+.note-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  padding-left: var(--space-5);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}

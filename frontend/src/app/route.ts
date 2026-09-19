@@ -18,6 +18,23 @@ export type RunTab = (typeof RUN_TABS)[number];
 
 export const DEFAULT_RUN_TAB: RunTab = "overview";
 
+/**
+ * The validation detail page's panels (SP 5.26–SP 5.35).
+ *
+ * Fewer tabs than there are specification points on purpose: the conclusion
+ * belongs beside the run's status and its notices (SP 5.32 / SP 5.35) and the
+ * coverage warnings belong beside the coverage they explain (SP 5.30 / SP 5.33),
+ * so the pipeline artifacts that the pipeline has not written yet sit together
+ * in one place instead of in three empty tabs (SP 5.27 / SP 5.29 / SP 5.31).
+ */
+export const VALIDATION_TABS = ["overview", "split", "coverage", "pipeline", "report"] as const;
+export type ValidationTab = (typeof VALIDATION_TABS)[number];
+
+export const DEFAULT_VALIDATION_TAB: ValidationTab = "overview";
+
+/** The literal path segment that selects the validation dashboard. */
+export const VALIDATIONS_SEGMENT = "validations";
+
 /** The run list's shareable state (SP 5.13 filters plus paging). */
 export interface RunListSelection {
   limit: number;
@@ -41,7 +58,9 @@ export const COMPARISON_SEGMENT = "compare";
 export type Route =
   | { kind: "runs"; selection: RunListSelection }
   | { kind: "run"; runId: string; tab: RunTab }
-  | { kind: "comparison"; runIds: string[] };
+  | { kind: "comparison"; runIds: string[] }
+  | { kind: "validations"; limit: number; offset: number }
+  | { kind: "validation"; runId: string; tab: ValidationTab };
 
 export const DEFAULT_ROUTE: Route = {
   kind: "runs",
@@ -175,6 +194,12 @@ function asTab(value: string | null): RunTab {
   return RUN_TABS.includes(value as RunTab) ? (value as RunTab) : DEFAULT_RUN_TAB;
 }
 
+function asValidationTab(value: string | null): ValidationTab {
+  return VALIDATION_TABS.includes(value as ValidationTab)
+    ? (value as ValidationTab)
+    : DEFAULT_VALIDATION_TAB;
+}
+
 /** Decode a fragment, tolerating malformed input rather than throwing. */
 function safeDecode(value: string): string {
   try {
@@ -210,6 +235,21 @@ export function parseHash(hash: string): Route {
   const [pathPart, searchPart] = splitFragment(raw);
   const segments = pathPart.split("/").filter((segment) => segment !== "");
 
+  if (segments[0] === VALIDATIONS_SEGMENT) {
+    if (segments.length === 1) {
+      const params = new URLSearchParams(searchPart);
+      return {
+        kind: "validations",
+        limit: positiveInt(params.get("limit"), DEFAULT_PAGE_SIZE),
+        offset: positiveInt(params.get("offset"), 0),
+      };
+    }
+    return {
+      kind: "validation",
+      runId: safeDecode(segments[1] ?? ""),
+      tab: asValidationTab(new URLSearchParams(searchPart).get("tab")),
+    };
+  }
   if (segments[0] !== "runs") {
     return DEFAULT_ROUTE;
   }
@@ -249,6 +289,22 @@ export function buildHash(route: Route): string {
   if (route.kind === "runs") {
     const search = buildRunListSearch(route.selection);
     return search === "" ? "#/runs" : `#/runs?${search}`;
+  }
+  if (route.kind === "validations") {
+    const params = new URLSearchParams();
+    if (route.limit !== DEFAULT_PAGE_SIZE) {
+      params.set("limit", String(route.limit));
+    }
+    if (route.offset > 0) {
+      params.set("offset", String(route.offset));
+    }
+    const search = params.toString();
+    return search === "" ? `#/${VALIDATIONS_SEGMENT}` : `#/${VALIDATIONS_SEGMENT}?${search}`;
+  }
+  if (route.kind === "validation") {
+    const encoded = encodeURIComponent(route.runId);
+    const path = `#/${VALIDATIONS_SEGMENT}/${encoded}`;
+    return route.tab === DEFAULT_VALIDATION_TAB ? path : `${path}?tab=${route.tab}`;
   }
   if (route.kind === "comparison") {
     const ids = route.runIds.slice(0, MAX_COMPARISON_RUNS).join(",");

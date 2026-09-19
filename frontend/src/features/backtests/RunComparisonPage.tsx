@@ -255,7 +255,11 @@ export function RunComparisonPage({ runIds, onOpenRun, onBack }: RunComparisonPa
             </div>
 
             <ul className="summary-list" data-testid="comparison-notes">
-              {[...COMPARISON_NOTES, ...payload.notes].map((note) => (
+              {/* The server's notes are the canonical wording of the caveats
+                  (they ship with the payload); the local list is only a
+                  fallback for a response that carries none. Rendering both
+                  would repeat the same two caveats in two voices. */}
+              {(payload.notes.length > 0 ? payload.notes : COMPARISON_NOTES).map((note) => (
                 <li key={note}>{note}</li>
               ))}
             </ul>

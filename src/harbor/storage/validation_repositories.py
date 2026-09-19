@@ -29,6 +29,7 @@ from harbor.core.validation_domain import ValidationStatus
 from harbor.storage.models import (
     Base,
     ValidationConclusion,
+    ValidationEvent,
     ValidationFold,
     ValidationManifest,
     ValidationRun,
@@ -274,6 +275,14 @@ class ValidationRepository:
         """Record append-only audit warnings for a run."""
         return self._insert_rows(ValidationWarning, validation_run_id, rows, ("id",))
 
+    def insert_events(self, validation_run_id: str, rows: Sequence[Mapping[str, Any]]) -> int:
+        """Record append-only lifecycle events for a run (SP 5.26 / SP 5.33).
+
+        Conflict target is the autoincrement ``id``: an event is a fact about
+        what happened, so re-writing one is a no-op rather than an overwrite.
+        """
+        return self._insert_rows(ValidationEvent, validation_run_id, rows, ("id",))
+
     def get_manifest(self, validation_run_id: str) -> Select[Any]:
         """Return a query for a run's frozen dataset manifest."""
         return select(ValidationManifest).where(
@@ -305,7 +314,21 @@ class ValidationRepository:
         )
 
     def list_warnings(self, validation_run_id: str) -> Select[Any]:
-        """Return a run-scoped warnings query."""
-        return select(ValidationWarning).where(
-            ValidationWarning.validation_run_id == validation_run_id
+        """Return a run-scoped warnings query, oldest first."""
+        return (
+            select(ValidationWarning)
+            .where(ValidationWarning.validation_run_id == validation_run_id)
+            .order_by(ValidationWarning.id.asc())
+        )
+
+    def list_events(self, validation_run_id: str) -> Select[Any]:
+        """Return a run's lifecycle events in the order they happened (SP 5.33).
+
+        Ordered because this is an audit trail: consecutive reads must agree, and
+        two rows recorded in the same instant are separated by ``id``.
+        """
+        return (
+            select(ValidationEvent)
+            .where(ValidationEvent.validation_run_id == validation_run_id)
+            .order_by(ValidationEvent.recorded_at.asc(), ValidationEvent.id.asc())
         )

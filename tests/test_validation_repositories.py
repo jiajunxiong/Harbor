@@ -9,6 +9,7 @@ from sqlalchemy.dialects import postgresql
 from harbor.core.validation_domain import OOSConclusion, ValidationStatus
 from harbor.storage.models import (
     ValidationConclusion,
+    ValidationEvent,
     ValidationFold,
     ValidationManifest,
     ValidationSplit,
@@ -361,3 +362,82 @@ class ValidationArtifactRepositoryTests(unittest.TestCase):
         self.assertIn("FROM validation_warnings", sql)
         self.assertIn("validation_warnings.validation_run_id = %(validation_run_id_1)s", sql)
         self.assertNotIn(".backtest_run_id =", sql)
+
+
+class ValidationEventRepositoryTests(unittest.TestCase):
+    """Verify the lifecycle event statements (MVP 5 / SP 5.26, SP 5.33).
+
+    Events are what make a run's **freeze time** and its audit trail recoverable:
+    the master row keeps only the last ``updated_at``, so before this table a
+    run's freeze time was lost as soon as it advanced.
+    """
+
+    def setUp(self) -> None:
+        self.repository = ValidationRepository(connection=object())  # type: ignore[arg-type]
+
+    def _event_rows(self, **overrides: Any) -> list[dict[str, Any]]:
+        row: dict[str, Any] = {
+            "from_status": "DRAFT",
+            "to_status": "DATA_FROZEN",
+            "reason": "validation freeze",
+            "recorded_at": datetime(2026, 9, 19, tzinfo=timezone.utc),
+        }
+        row.update(overrides)
+        return [row]
+
+    def test_events_are_append_only_on_their_id(self) -> None:
+        statement = self.repository._insert_rows_statement(
+            ValidationEvent, "validation-001", self._event_rows(), ("id",)
+        )
+        assert statement is not None
+        sql = str(statement.compile(dialect=postgresql.dialect()))
+
+        self.assertIn("INSERT INTO validation_events", sql)
+        self.assertIn("ON CONFLICT", sql)
+        # An event records what happened, so a re-write is a no-op rather than an
+        # overwrite of history.
+        self.assertIn("(id)", sql)
+
+    def test_events_carry_the_run_id(self) -> None:
+        statement = self.repository._insert_rows_statement(
+            ValidationEvent, "validation-001", self._event_rows(), ("id",)
+        )
+        assert statement is not None
+
+        self.assertIn(
+            "validation-001", statement.compile(dialect=postgresql.dialect()).params.values()
+        )
+
+    def test_creating_a_run_records_a_null_from_status(self) -> None:
+        # A creation has no predecessor; recording it as DRAFT -> DRAFT would be
+        # a fiction about what happened.
+        statement = self.repository._insert_rows_statement(
+            ValidationEvent,
+            "validation-001",
+            self._event_rows(from_status=None, to_status="DRAFT", reason="validation run created"),
+            ("id",),
+        )
+        assert statement is not None
+
+        self.assertIn(None, statement.compile(dialect=postgresql.dialect()).params.values())
+
+    def test_events_come_back_in_chronological_order(self) -> None:
+        sql = str(
+            self.repository.list_events("validation-001").compile(dialect=postgresql.dialect())
+        )
+
+        self.assertIn("ORDER BY validation_events.recorded_at ASC", sql)
+        # Two events in the same instant are separated by insertion order.
+        self.assertIn("validation_events.id ASC", sql)
+
+    def test_warnings_are_ordered_too(self) -> None:
+        sql = str(
+            self.repository.list_warnings("validation-001").compile(dialect=postgresql.dialect())
+        )
+
+        self.assertIn("ORDER BY validation_warnings.id ASC", sql)
+
+    def test_an_empty_event_batch_writes_nothing(self) -> None:
+        self.assertIsNone(
+            self.repository._insert_rows_statement(ValidationEvent, "validation-001", [], ("id",))
+        )

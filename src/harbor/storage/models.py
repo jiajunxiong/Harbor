@@ -918,6 +918,36 @@ class ValidationWarning(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ValidationEvent(Base):
+    """One recorded lifecycle transition of a validation run (MVP 5 / SP 5.26, SP 5.33).
+
+    Append-only. The SP 3.13 state machine produces a ``ValidationTransition``
+    for every move, but nothing persisted one, so a run's **freeze time** and its
+    audit trail were both unrecoverable once the next transition happened: the
+    master row only carries the last ``updated_at``.
+
+    ``from_status`` is nullable because creating a run is a state *entry* with no
+    predecessor, and recording it as ``DRAFT -> DRAFT`` would be a fiction.
+    """
+
+    __tablename__ = "validation_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["validation_run_id"],
+            ["validation_runs.run_id"],
+            name="fk_validation_events_run",
+        ),
+        Index("ix_validation_events_run", "validation_run_id", "recorded_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    validation_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    from_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    to_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class PaperRun(Base):
     """A master record of one paper run (MVP 4 / SP 4.5 / 4.9).
 

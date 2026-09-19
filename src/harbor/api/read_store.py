@@ -15,14 +15,18 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Protocol
 
+from pydantic import ValidationError
 from sqlalchemy import Connection, func, select
 
+from harbor.core.validation_config_loader import load_validation_config_from_mapping
 from harbor.services.backtest import RenderedReport, render_backtest_report
 from harbor.services.backtest_replay import (
     MAX_SIBLINGS,
     ReplayConsistency,
     build_replay_consistency,
 )
+from harbor.services.validation import render_validation_report
+from harbor.services.validation_dataset import DatasetProfile, build_profile
 from harbor.storage.backtest_repositories import BacktestRepository
 from harbor.storage.models import (
     BacktestFill,
@@ -40,6 +44,10 @@ from harbor.storage.models import (
     QualityIssue,
     RiskApproval,
     Security,
+    ValidationEvent,
+    ValidationFold,
+    ValidationStressResult,
+    ValidationTrial,
     ValidationWarning,
 )
 from harbor.storage.paper_repositories import PaperRepository
@@ -115,6 +123,24 @@ class ReadStore(Protocol):
     def get_validation_conclusion(self, run_id: str) -> Row | None: ...
 
     def validation_warning_stats(self, run_id: str) -> tuple[int, dict[str, int]]: ...
+
+    def get_validation_split(self, run_id: str) -> Row | None: ...
+
+    def list_validation_warnings(self, run_id: str) -> list[Row]: ...
+
+    def list_validation_events(self, run_id: str) -> list[Row]: ...
+
+    def validation_artifact_counts(self, run_id: str) -> dict[str, int]: ...
+
+    def list_validation_trials(self, run_id: str) -> list[Row]: ...
+
+    def list_validation_folds(self, run_id: str) -> list[Row]: ...
+
+    def list_validation_stress(self, run_id: str) -> list[Row]: ...
+
+    def validation_dataset_profile(self, run_id: str) -> DatasetProfile | None: ...
+
+    def render_validation_report(self, run_id: str, report_format: str) -> RenderedReport: ...
 
     def list_paper_runs(self, *, limit: int, offset: int) -> tuple[list[Row], int]: ...
 
@@ -331,6 +357,87 @@ class SqlReadStore:
             .group_by(ValidationWarning.severity)
         ).all()
         return total, {str(severity): int(count) for severity, count in rows}
+
+    def get_validation_split(self, run_id: str) -> Row | None:
+        """Return a validation run's frozen split, or ``None`` (SP 5.28)."""
+        repository = ValidationRepository(self._connection)
+        row = self._connection.execute(repository.get_split(run_id)).first()
+        return dict(row._mapping) if row is not None else None
+
+    def list_validation_warnings(self, run_id: str) -> list[Row]:
+        """Return a run's coverage warnings in the order they were recorded (SP 5.33)."""
+        repository = ValidationRepository(self._connection)
+        rows = self._connection.execute(repository.list_warnings(run_id)).all()
+        return [dict(row._mapping) for row in rows]
+
+    def list_validation_events(self, run_id: str) -> list[Row]:
+        """Return a run's lifecycle events, oldest first (SP 5.26)."""
+        repository = ValidationRepository(self._connection)
+        rows = self._connection.execute(repository.list_events(run_id)).all()
+        return [dict(row._mapping) for row in rows]
+
+    def validation_artifact_counts(self, run_id: str) -> dict[str, int]:
+        """Return how many of each artifact a validation run has persisted (SP 5.26)."""
+        return {
+            "trials": self._count(ValidationTrial, ValidationTrial.validation_run_id == run_id),
+            "folds": self._count(ValidationFold, ValidationFold.validation_run_id == run_id),
+            "stress_results": self._count(
+                ValidationStressResult, ValidationStressResult.validation_run_id == run_id
+            ),
+            "warnings": self._count(
+                ValidationWarning, ValidationWarning.validation_run_id == run_id
+            ),
+            "events": self._count(ValidationEvent, ValidationEvent.validation_run_id == run_id),
+        }
+
+    def list_validation_trials(self, run_id: str) -> list[Row]:
+        """Return a run's parameter trials (SP 5.27)."""
+        repository = ValidationRepository(self._connection)
+        rows = self._connection.execute(repository.list_trials(run_id)).all()
+        return [dict(row._mapping) for row in rows]
+
+    def list_validation_folds(self, run_id: str) -> list[Row]:
+        """Return a run's walk-forward folds, in fold order (SP 5.29)."""
+        repository = ValidationRepository(self._connection)
+        rows = self._connection.execute(repository.list_folds(run_id)).all()
+        return [dict(row._mapping) for row in rows]
+
+    def list_validation_stress(self, run_id: str) -> list[Row]:
+        """Return a run's stress-scenario results (SP 5.31)."""
+        repository = ValidationRepository(self._connection)
+        rows = self._connection.execute(repository.list_stress_results(run_id)).all()
+        return [dict(row._mapping) for row in rows]
+
+    def validation_dataset_profile(self, run_id: str) -> DatasetProfile | None:
+        """Measure what the stored data covers for a run's frozen window (SP 5.30).
+
+        The profile comes from :func:`build_profile`, the same function the
+        ``validation freeze`` command runs, so the API cannot report coverage
+        that the freeze disagrees with.
+
+        Returns ``None`` when the run's config snapshot cannot be rebuilt into a
+        validation config. A database failure is *not* caught: it must surface as
+        an error rather than as "no data", which a reader would take as a fact
+        about the run.
+        """
+        run = self.get_validation_run(run_id)
+        if run is None:
+            return None
+        try:
+            config = load_validation_config_from_mapping(dict(run.get("config_snapshot") or {}))
+        except (ValueError, ValidationError):
+            return None
+        return build_profile(
+            connection=self._connection,
+            config=config,
+            config_hash=str(run.get("config_hash", "")),
+        )
+
+    def render_validation_report(self, run_id: str, report_format: str) -> RenderedReport:
+        """Render a validation report with the CLI's renderer (SP 5.34)."""
+        return render_validation_report(
+            connection=self._connection, run_id=run_id, report_format=report_format
+        )
 
     # -- run statistics --------------------------------------------------
 

@@ -468,17 +468,40 @@ class BacktestRepository:
         )
 
     def list_positions(self, market: str, run_id: str) -> Select[Any]:
-        """Return a market- and run-scoped position snapshots query."""
-        return select(BacktestPosition).where(
-            BacktestPosition.backtest_run_id == run_id,
-            BacktestPosition.market == market,
+        """Return a market- and run-scoped position snapshots query (ordered).
+
+        Ordered by day then symbol: the consistency check (SP 2.62) compares two
+        runs' sections positionally, and an unordered read can return the same
+        rows in a different sequence, which would be reported as a difference.
+        """
+        return (
+            select(BacktestPosition)
+            .where(
+                BacktestPosition.backtest_run_id == run_id,
+                BacktestPosition.market == market,
+            )
+            .order_by(
+                BacktestPosition.as_of_date.asc(),
+                BacktestPosition.symbol.asc(),
+            )
         )
 
     def list_fills(self, market: str, run_id: str) -> Select[Any]:
-        """Return a market- and run-scoped fills query."""
-        return select(BacktestFill).where(
-            BacktestFill.backtest_run_id == run_id,
-            BacktestFill.market == market,
+        """Return a market- and run-scoped fills query, in execution order.
+
+        ``id`` is the insertion sequence, which is the order the engine filled
+        the orders in — deterministic for a replayed run and, unlike an
+        unordered read, stable enough to compare two runs row by row (SP 2.62).
+        Without it PostgreSQL is free to return the rows in any order, and two
+        runs with byte-identical fills were reported as 61,142 differences.
+        """
+        return (
+            select(BacktestFill)
+            .where(
+                BacktestFill.backtest_run_id == run_id,
+                BacktestFill.market == market,
+            )
+            .order_by(BacktestFill.id.asc())
         )
 
     def list_rebalances(self, market: str, run_id: str) -> Select[Any]:
@@ -493,10 +516,19 @@ class BacktestRepository:
         return select(BacktestMetric).where(BacktestMetric.backtest_run_id == run_id)
 
     def list_rejected_trades(self, market: str, run_id: str) -> Select[Any]:
-        """Return a market- and run-scoped rejected trades query."""
-        return select(BacktestRejectedTrade).where(
-            BacktestRejectedTrade.backtest_run_id == run_id,
-            BacktestRejectedTrade.market == market,
+        """Return a market- and run-scoped rejected trades query, in the order recorded.
+
+        Ordered by ``id`` for the same reason as fills: the consistency check
+        compares runs row by row, so a read without an explicit order can
+        manufacture differences that do not exist.
+        """
+        return (
+            select(BacktestRejectedTrade)
+            .where(
+                BacktestRejectedTrade.backtest_run_id == run_id,
+                BacktestRejectedTrade.market == market,
+            )
+            .order_by(BacktestRejectedTrade.id.asc())
         )
 
     @staticmethod

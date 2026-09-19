@@ -19,6 +19,7 @@ import {
   parseRunListSelection,
   selectionToQuery,
   withSelection,
+  type Route,
   type RunListSelection,
 } from "./route";
 
@@ -179,7 +180,7 @@ describe("comparison routes", () => {
   });
 
   it("round-trips a comparison link", () => {
-    const route = { kind: "comparison", runIds: ["bt-1", "bt-2"] } as const;
+    const route: Route = { kind: "comparison", runIds: ["bt-1", "bt-2"] };
 
     expect(parseHash(buildHash(route))).toEqual(route);
   });
@@ -214,6 +215,80 @@ describe("comparison routes", () => {
     expect(parseHash("#/runs/compare-two")).toEqual({
       kind: "run",
       runId: "compare-two",
+      tab: "overview",
+    });
+  });
+});
+
+describe("validation routes (SP 5.26-SP 5.35)", () => {
+  it("parses the validation list with its paging state", () => {
+    expect(parseHash("#/validations")).toEqual({
+      kind: "validations",
+      limit: DEFAULT_PAGE_SIZE,
+      offset: 0,
+    });
+    expect(parseHash("#/validations?limit=10&offset=20")).toEqual({
+      kind: "validations",
+      limit: 10,
+      offset: 20,
+    });
+  });
+
+  it("parses a validation detail link and its tab", () => {
+    expect(parseHash("#/validations/val-1")).toEqual({
+      kind: "validation",
+      runId: "val-1",
+      tab: "overview",
+    });
+    expect(parseHash("#/validations/val-1?tab=coverage")).toEqual({
+      kind: "validation",
+      runId: "val-1",
+      tab: "coverage",
+    });
+  });
+
+  it("falls back to the overview tab for an unknown tab name", () => {
+    // A stale link must land somewhere useful rather than on a blank page.
+    expect(parseHash("#/validations/val-1?tab=nonexistent")).toEqual({
+      kind: "validation",
+      runId: "val-1",
+      tab: "overview",
+    });
+  });
+
+  it("round-trips both validation routes", () => {
+    const list: Route = { kind: "validations", limit: 10, offset: 20 };
+    expect(parseHash(buildHash(list))).toEqual(list);
+
+    const detail: Route = { kind: "validation", runId: "val-1", tab: "pipeline" };
+    expect(parseHash(buildHash(detail))).toEqual(detail);
+  });
+
+  it("omits the default tab and default paging from the link", () => {
+    expect(buildHash({ kind: "validation", runId: "val-1", tab: "overview" })).toBe(
+      "#/validations/val-1",
+    );
+    expect(buildHash({ kind: "validations", limit: DEFAULT_PAGE_SIZE, offset: 0 })).toBe(
+      "#/validations",
+    );
+  });
+
+  it("keeps the validation dashboard working through an encoded fragment", () => {
+    // The port forwarder percent-encodes the whole fragment, which is how
+    // `#/validations/val-1?tab=split` reaches the browser in a forwarded session.
+    expect(parseHash("#%2Fvalidations%2Fval-1%3Ftab%3Dsplit")).toEqual({
+      kind: "validation",
+      runId: "val-1",
+      tab: "split",
+    });
+  });
+
+  it("does not confuse a validation run with a run id named validations", () => {
+    // The literal segment wins, exactly like `compare` under `#/runs`.
+    expect(parseHash("#/validations").kind).toBe("validations");
+    expect(parseHash("#/runs/validations")).toEqual({
+      kind: "run",
+      runId: "validations",
       tab: "overview",
     });
   });

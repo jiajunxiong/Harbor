@@ -342,3 +342,52 @@ class FactorSnapshotRepositoryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ResultReadOrderingTests(unittest.TestCase):
+    """Verify the result reads are ordered (MVP 5 / SP 5.21).
+
+    The consistency check (SP 2.62) compares two runs' sections *positionally*.
+    A read with no ``ORDER BY`` lets PostgreSQL return the same rows in a
+    different sequence, which the check then reports as a difference: two runs
+    whose fills and net values were identical as sets were reported as 61,142
+    differences, and the download/report artifacts inherited the same instability.
+    These assertions pin the ordering contract so it cannot be dropped again.
+    """
+
+    def setUp(self) -> None:
+        self.repository = BacktestRepository(connection=object())  # type: ignore[arg-type]
+
+    def _sql(self, statement: Any) -> str:
+        return statement.compile(dialect=postgresql.dialect()).string
+
+    def test_fills_come_back_in_execution_order(self) -> None:
+        sql = self._sql(self.repository.list_fills(Market.HK.value, "run-001"))
+
+        self.assertIn("ORDER BY backtest_fills.id ASC", sql)
+
+    def test_positions_are_ordered_by_day_and_symbol(self) -> None:
+        sql = self._sql(self.repository.list_positions(Market.US.value, "run-001"))
+
+        self.assertIn("ORDER BY backtest_positions.as_of_date ASC", sql)
+        self.assertIn("backtest_positions.symbol ASC", sql)
+
+    def test_rejected_trades_are_ordered_by_insertion(self) -> None:
+        sql = self._sql(self.repository.list_rejected_trades(Market.HK.value, "run-001"))
+
+        self.assertIn("ORDER BY backtest_rejected_trades.id ASC", sql)
+
+    def test_net_values_are_ordered_oldest_first(self) -> None:
+        sql = self._sql(self.repository.list_net_values("run-001"))
+
+        self.assertIn("ORDER BY backtest_net_values.as_of_date ASC", sql)
+
+    def test_run_scoped_trade_reads_are_ordered_too(self) -> None:
+        # The API's trade tables use the run-scoped variants, so they must not
+        # rely on the database's default order either.
+        for statement in (
+            self.repository.list_run_fills("run-001"),
+            self.repository.list_run_rejected_trades("run-001"),
+        ):
+            with self.subTest(statement):
+                self.assertIn("ORDER BY", self._sql(statement))

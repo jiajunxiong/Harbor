@@ -2,7 +2,13 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 
 import { createQueryClient } from "./api/queryClient";
-import { DEFAULT_ROUTE, type RunListSelection, type RunTab } from "./app/route";
+import {
+  DEFAULT_PAGE_SIZE,
+  DEFAULT_ROUTE,
+  type RunListSelection,
+  type RunTab,
+  type ValidationTab,
+} from "./app/route";
 import { useHashRoute } from "./app/useHashRoute";
 import { ApiStatus } from "./components/ApiStatus";
 import { ResearchDisclaimer } from "./components/ResearchDisclaimer";
@@ -10,6 +16,8 @@ import { ThemeToggle } from "./components/ThemeToggle";
 import { BacktestRunsPage } from "./features/backtests/BacktestRunsPage";
 import { RunComparisonPage } from "./features/backtests/RunComparisonPage";
 import { RunDetailPage } from "./features/backtests/RunDetailPage";
+import { ValidationDetailPage } from "./features/validations/ValidationDetailPage";
+import { ValidationRunsPage } from "./features/validations/ValidationRunsPage";
 import { ThemeProvider } from "./theme/ThemeProvider";
 
 function AppShell() {
@@ -36,6 +44,27 @@ function AppShell() {
     [navigate],
   );
 
+  const showBacktests = useCallback(() => {
+    navigate(DEFAULT_ROUTE);
+  }, [navigate]);
+
+  const showValidations = useCallback(() => {
+    navigate({ kind: "validations", limit: DEFAULT_PAGE_SIZE, offset: 0 });
+  }, [navigate]);
+
+  const openValidation = useCallback(
+    (runId: string) => {
+      navigate({ kind: "validation", runId, tab: "overview" });
+    },
+    [navigate],
+  );
+
+  const backToValidations = useCallback(() => {
+    navigate({ kind: "validations", limit: DEFAULT_PAGE_SIZE, offset: 0 });
+  }, [navigate]);
+
+  const inValidations = route.kind === "validations" || route.kind === "validation";
+
   return (
     <div className="app">
       <header className="app__header">
@@ -46,6 +75,27 @@ function AppShell() {
               只读展示回测、样本外验证与模拟盘结果 · 无下单与写入入口
             </span>
           </div>
+          <nav className="crumbs" aria-label="主视图切换">
+            <button
+              type="button"
+              className={inValidations ? "link-button" : "link-button link-button--active"}
+              aria-current={inValidations ? undefined : "page"}
+              data-testid="nav-backtests"
+              onClick={showBacktests}
+            >
+              回测运行
+            </button>
+            <span aria-hidden="true">|</span>
+            <button
+              type="button"
+              className={inValidations ? "link-button link-button--active" : "link-button"}
+              aria-current={inValidations ? "page" : undefined}
+              data-testid="nav-validations"
+              onClick={showValidations}
+            >
+              样本外验证
+            </button>
+          </nav>
           <ApiStatus />
           <ThemeToggle />
         </div>
@@ -81,6 +131,26 @@ function AppShell() {
             onBack={() => {
               navigate(DEFAULT_ROUTE);
             }}
+          />
+        ) : null}
+        {route.kind === "validations" ? (
+          <ValidationRunsPage
+            limit={route.limit}
+            offset={route.offset}
+            onSelectionChange={(limit, offset) => {
+              navigate({ kind: "validations", limit, offset });
+            }}
+            onOpenRun={openValidation}
+          />
+        ) : null}
+        {route.kind === "validation" ? (
+          <ValidationDetailPage
+            runId={route.runId}
+            tab={route.tab}
+            onTabChange={(tab: ValidationTab) => {
+              navigate({ kind: "validation", runId: route.runId, tab });
+            }}
+            onBack={backToValidations}
           />
         ) : null}
       </main>

@@ -410,7 +410,201 @@ export function comparisonResponse(
       },
     ],
     warnings: ["所选运行的基准币种不同（HKD、USD）；曲线为累计收益，币种不同时不可据此比较金额规模。"],
-    notes: ["曲线以各运行自身首个净值点为基准，归一为累计收益。"],
+    // The same three caveats the server sends (`COMPARISON_NOTES` in the
+    // backtest router), so a test cannot pass against a fixture that promises
+    // less than the API does.
+    notes: [
+      "曲线以各运行自身首个净值点为基准，归一为累计收益；基准与 SP 5.16 的累计收益一致。",
+      "不提供跨币种金额比较：本项目数据没有汇率表，任何隐式 1:1 换算都会被拒绝。",
+      "单指标最优不等于策略更优；样本期、市场与标的不同时，指标之间不具备可比性。",
+    ],
+    ...overrides,
+  };
+}
+
+/* -- Stage 3 fixtures (SP 5.26-SP 5.35) --------------------------------- */
+
+/** A validation run row shaped like the API schema. */
+export function validationRun(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    run_id: "val-1",
+    // The persisted status vocabulary is the SP 3.13 state machine's.
+    status: "DATA_FROZEN",
+    code_version: "abc1234",
+    config_hash: "hash-val-1",
+    test_set_id: null,
+    created_at: "2026-02-01T00:00:00+00:00",
+    updated_at: "2026-02-01T01:00:00+00:00",
+    error_summary: null,
+    ...overrides,
+  };
+}
+
+/** A validation run detail: frozen, with its events and notices (SP 5.26). */
+export function validationRunDetail(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    ...validationRun(),
+    config_snapshot: { markets: ["HK"], base_currency: "HKD" },
+    dataset_fingerprint: "fp-oos-1",
+    frozen_at: "2026-02-01T01:00:00+00:00",
+    conclusion: null,
+    warning_count: 5,
+    warnings_by_severity: { error: 1, warning: 4 },
+    counts: { trials: 0, folds: 0, stress_results: 0, warnings: 5, events: 2 },
+    notices: [
+      "测试集只解锁一次：评测后不得为调参再次解锁（状态机不可回退）",
+      "调参后用同一切分重测得到的通过不算通过：参数试验必须在冻结切分上完成",
+      "该运行尚未产生结论：结论只由验证流水线评测写入",
+    ],
+    ...overrides,
+  };
+}
+
+/** A concluded run, so the verdict and its limitations can be rendered. */
+export function validationConclusion(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    conclusion: "INCONCLUSIVE",
+    rule_version: "oos-rule-1",
+    created_at: "2026-02-02T00:00:00+00:00",
+    limitations: [{ code: "single_regime", detail: "只覆盖单一市场状态" }],
+    evidence: { sharpe: 0.9, note: "样本内为参考" },
+    ...overrides,
+  };
+}
+
+/** A frozen split (SP 5.28). */
+export function validationSplitResponse(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    run_id: "val-1",
+    available: true,
+    unavailable_reason: null,
+    status: "DATA_FROZEN",
+    split: {
+      split_hash: "split-hash-1",
+      train_start: "2019-01-01",
+      train_end: "2020-12-31",
+      validation_start: "2021-01-01",
+      validation_end: "2021-12-31",
+      test_start: "2022-01-01",
+      test_end: "2022-12-31",
+    },
+    notes: ["切分在冻结时写入 validation_splits 并带 split_hash"],
+    ...overrides,
+  };
+}
+
+/** Measured coverage with one failing and one passing item (SP 5.30). */
+export function validationCoverageResponse(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    run_id: "val-1",
+    available: true,
+    unavailable_reason: null,
+    source: "live_measurement",
+    measured_at: "2026-02-02T00:00:00+00:00",
+    frozen_fingerprint: "fp-oos-1",
+    current_fingerprint: "fp-oos-1",
+    fingerprint_matches: true,
+    markets: ["HK"],
+    items: [
+      {
+        market: "HK",
+        item: "prices",
+        covered: 741,
+        denominator: 989,
+        coverage_pct: 74.92416582406472,
+        severity: "error",
+        reason: "price coverage 74.9% below threshold 95.0%",
+        gap: "248 个交易日缺少行情数据",
+      },
+      {
+        market: "HK",
+        item: "stock_pool",
+        covered: 89,
+        denominator: 89,
+        coverage_pct: 100,
+        severity: null,
+        reason: null,
+        gap: "",
+      },
+    ],
+    notes: ["覆盖百分比为本次请求实测", "缺少覆盖数据只会记为缺口或警告"],
+    ...overrides,
+  };
+}
+
+/** Recorded coverage warnings (SP 5.33). */
+export function validationWarningsResponse(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    run_id: "val-1",
+    warning_count: 1,
+    warnings_by_severity: { error: 1 },
+    items: [
+      {
+        warning_code: "coverage.prices",
+        severity: "error",
+        message: "248 个交易日缺少行情数据",
+        context: { market: "HK", item: "prices", severity: "error" },
+        created_at: "2026-02-01T01:00:00+00:00",
+      },
+    ],
+    notes: [
+      "警告只记录未通过门槛的覆盖项；通过项不会写入警告行",
+      "警告表的 severity 只存 warning / error 两档（数据库 CHECK 约束）",
+    ],
+    ...overrides,
+  };
+}
+
+/** Lifecycle events, creation first (SP 5.26 / SP 5.33). */
+export function validationEventsResponse(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    run_id: "val-1",
+    event_count: 2,
+    frozen_at: "2026-02-01T01:00:00+00:00",
+    events: [
+      {
+        from_status: null,
+        to_status: "DRAFT",
+        reason: "validation run created",
+        recorded_at: "2026-02-01T00:00:00+00:00",
+      },
+      {
+        from_status: "DRAFT",
+        to_status: "DATA_FROZEN",
+        reason: "validation freeze",
+        recorded_at: "2026-02-01T01:00:00+00:00",
+      },
+    ],
+    notes: ["审计事件按时间累积；创建事件的 from_status 为空"],
+    ...overrides,
+  };
+}
+
+/** An artifact list the pipeline has not written yet (SP 5.27 / 5.29 / 5.31). */
+export function validationArtifactResponse(
+  key: "trials" | "folds" | "results",
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const countKey = key === "trials" ? "trial_count" : key === "folds" ? "fold_count" : "stress_count";
+  return {
+    run_id: "val-1",
+    available: false,
+    unavailable_reason: "该运行没有记录：写入者是验证流水线，当前代码库中尚无调用方",
+    [countKey]: 0,
+    [key]: [],
+    notes: ["参数试验在训练/验证切分上进行，测试集不参与调参"],
     ...overrides,
   };
 }

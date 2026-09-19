@@ -40,13 +40,24 @@ from sqlalchemy.engine import Connection
 
 from harbor.core.oos_csv import export_oos_csvs
 from harbor.core.oos_report import render_oos_report
-from harbor.core.validation_config_loader import config_hash, load_validation_config
+from harbor.core.validation_config_loader import (
+    config_hash,
+    load_validation_config,
+    load_validation_config_from_mapping,
+)
 from harbor.core.validation_domain import EvaluationSplit, ValidationStatus
 from harbor.core.validation_state_machine import (
     ValidationRunState,
     ValidationStateError,
     validation_initial_state,
 )
+from harbor.services.report_export import (
+    REPORT_FORMATS,
+    REPORT_MEDIA_TYPES,
+    RenderedReport,
+    safe_filename_part,
+)
+from harbor.services.validation_dataset import build_profile, persist_profile
 from harbor.storage.validation_repositories import ValidationRepository
 
 
@@ -108,13 +119,27 @@ def run_validation_from_config(
     repository = ValidationRepository(connection)
     run_id = uuid.uuid4().hex
     state = validation_initial_state(run_id)
+    created_at = datetime.now(timezone.utc)
     repository.create_run(
         run_id=run_id,
         config_hash=config_hash(config),
         config_snapshot=config.model_dump(mode="json"),
         code_version=config.code_version,
-        created_at=datetime.now(timezone.utc),
+        created_at=created_at,
         status=ValidationStatus.DRAFT.value,
+    )
+    # Record that the run exists: an audit trail that starts at the first
+    # transition would leave the creation unaccounted for (SP 5.33).
+    repository.insert_events(
+        run_id,
+        [
+            {
+                "from_status": None,
+                "to_status": ValidationStatus.DRAFT.value,
+                "reason": "validation run created",
+                "recorded_at": created_at,
+            }
+        ],
     )
     # Persist the frozen split (SP 3.12) so ``show`` and ``report`` can render
     # the split diagram; the split is immutable per config and written once.
@@ -182,8 +207,16 @@ def run_validation_command(
     """Apply a state-machine command to a persisted validation run (SP 3.70).
 
     Loads the run's current status from the SP 3.12 repository, applies
-    ``command`` through the SP 3.13 state machine, persists the new status
-    and returns the run id and new status.
+    ``command`` through the SP 3.13 state machine, persists the new status and
+    returns the run id and new status. Every transition is also recorded as an
+    append-only event (SP 5.26 / SP 5.33), because the master row keeps only the
+    last ``updated_at`` and a run's freeze time was otherwise unrecoverable.
+
+    ``freeze`` additionally measures the dataset the run will actually read and
+    records it as an SP 3.6 manifest plus SP 3.10 coverage warnings (SP 5.26 /
+    SP 5.30). That measurement happens **before** the status is written: a
+    profiling failure leaves the run in DRAFT, where the operator can fix the
+    data and freeze again, instead of stranding it frozen without a manifest.
 
     Raises:
         ValidationServiceError: If the run is unknown or ``command`` is not
@@ -195,12 +228,63 @@ def run_validation_command(
         raise ValidationServiceError(f"Unknown validation run {run_id!r}.")
     current = ValidationStatus(row.status)
     result = advance_validation(run_id, current, command=command)
+
+    if result.status is ValidationStatus.DATA_FROZEN:
+        _freeze_dataset(connection, run_id=run_id, run_row=dict(row._mapping))
+
+    recorded_at = datetime.now(timezone.utc)
     repository.update_run(
         run_id=result.run_id,
         status=result.status.value,
-        updated_at=datetime.now(timezone.utc),
+        updated_at=recorded_at,
+    )
+    repository.insert_events(
+        run_id,
+        [
+            {
+                "from_status": current.value,
+                "to_status": result.status.value,
+                "reason": f"validation {command}",
+                "recorded_at": recorded_at,
+            }
+        ],
     )
     return result
+
+
+def _freeze_dataset(
+    connection: Connection,
+    *,
+    run_id: str,
+    run_row: Mapping[str, Any],
+) -> tuple[int, int]:
+    """Measure the run's dataset and record its manifest and warnings.
+
+    The profile is measured from the database rather than derived from the
+    configuration, so a run whose data is incomplete gets gaps and warnings
+    instead of a clean bill of health.
+
+    Returns:
+        ``(manifest_rows, warning_rows)``.
+    """
+    snapshot = run_row.get("config_snapshot")
+    if not isinstance(snapshot, Mapping):
+        raise ValidationServiceError(
+            f"Run {run_id!r} has no configuration snapshot to profile its dataset from."
+        )
+    config = load_validation_config_from_mapping(dict(snapshot))
+    profile = build_profile(
+        connection,
+        config=config,
+        config_hash=str(run_row["config_hash"]),
+    )
+    return persist_profile(
+        connection,
+        run_id=run_id,
+        profile=profile,
+        config_hash=str(run_row["config_hash"]),
+        random_seed=config.tuning.random_seed,
+    )
 
 
 class ValidationShowError(ValueError):
@@ -319,7 +403,13 @@ def show_validation(*, connection: Connection, run_id: str) -> ValidationShowRes
     )
 
 
-_REPORT_FORMATS = ("json", "csv", "html")
+_REPORT_FORMATS = REPORT_FORMATS
+
+#: The report formats a validation run can be exported in (MVP 5 / SP 5.34).
+#:
+#: The same three as a backtest report: the OOS renderers accept them all, and a
+#: second vocabulary is how an API ends up offering a format the renderer refuses.
+VALIDATION_REPORT_FORMATS = REPORT_FORMATS
 
 
 def _trial_log_rows(trial_rows: Sequence[Mapping[str, Any]]) -> list[dict[str, object]]:
@@ -515,3 +605,26 @@ def report_validation(
         for item in (conclusion_rows[0].get("limitations", []) if conclusion_rows else [])
     )
     return _render_report(artifact, report_format, limitations=limitations)
+
+
+def render_validation_report(
+    *, connection: Connection, run_id: str, report_format: str
+) -> RenderedReport:
+    """Render a run's validation report and describe how to serve it (SP 5.34).
+
+    The document comes from :func:`report_validation`, the same renderer
+    ``harbor-cli validation report`` writes to stdout, so a downloaded file and a
+    terminal report cannot disagree about a number or about which sections were
+    empty.
+
+    Raises:
+        ValidationReportError: If the run is missing or the format is unknown.
+    """
+    # Render first: an unknown format must be rejected before it is used as a key.
+    content = report_validation(connection=connection, run_id=run_id, report_format=report_format)
+    return RenderedReport(
+        report_format=report_format,
+        content=content,
+        media_type=REPORT_MEDIA_TYPES[report_format],
+        filename=f"harbor-validation-{safe_filename_part(run_id)}.{report_format}",
+    )
