@@ -24,13 +24,18 @@ class _Schema(BaseModel):
 
 
 class ApiInfo(_Schema):
-    """Identity and capability of this API instance (SP 5.3)."""
+    """Identity and capability of this API instance (SP 5.3).
+
+    ``report_formats`` is published here rather than duplicated in the frontend
+    so a client cannot offer a download the API would reject (SP 5.22).
+    """
 
     name: str = API_NAME
     version: str
     api_version: str = API_VERSION
     read_only: bool = True
     auth_required: bool = False
+    report_formats: list[str] = Field(default_factory=list)
 
 
 class HealthStatus(_Schema):
@@ -335,3 +340,110 @@ class RejectedTradeResponse(_Schema):
     offset: int = 0
     next_offset: int | None = None
     reasons: list[RejectionReasonCount] = Field(default_factory=list)
+
+
+# -- SP 5.21: replay manifest and consistency ---------------------------
+
+
+class ReplayManifestView(_Schema):
+    """A run's replay manifest (SP 2.61), with its input fingerprint.
+
+    ``fx_source``, ``calendar_version`` and ``random_seed`` are unset for a
+    backtest run because the columns are not persisted — the dashboard says so
+    rather than presenting an unset value as a fact about the run.
+    """
+
+    run_id: str
+    config_hash: str
+    code_version: str
+    start_date: date
+    end_date: date
+    data_cutoff: date
+    fx_source: str | None = None
+    calendar_version: str | None = None
+    random_seed: int | None = None
+    fingerprint: str
+
+
+class ConsistencyIssueView(_Schema):
+    """One located difference between two runs' results (SP 2.62)."""
+
+    section: str
+    location: str
+    expected: str
+    actual: str
+
+
+class SiblingConsistencyView(_Schema):
+    """Whether another run with the same inputs produced the same results.
+
+    ``consistent`` is the SP 2.62 verdict over the result sections only; two runs
+    that both produced nothing agree there trivially, so ``same_status`` and
+    ``outcome_agrees`` are reported separately rather than letting a vacuous
+    agreement read as a match.
+    """
+
+    run_id: str
+    status: str
+    same_status: bool = False
+    consistent: bool
+    outcome_agrees: bool = False
+    difference_count: int = 0
+    #: Capped at the server's limit; ``difference_count`` is always exact.
+    differences: list[ConsistencyIssueView] = Field(default_factory=list)
+
+
+class BacktestReplayResponse(_Schema):
+    """A run's replay manifest plus the runs claiming the same inputs (SP 5.21)."""
+
+    run_id: str
+    manifest: ReplayManifestView
+    siblings: list[SiblingConsistencyView] = Field(default_factory=list)
+    #: How many runs share these inputs, so a truncated list is visible as such.
+    sibling_total: int = 0
+    truncated: bool = False
+    notes: list[str] = Field(default_factory=list)
+
+
+# -- SP 5.23: multi-run comparison --------------------------------------
+
+
+class ComparisonPointView(_Schema):
+    """One rebased point of a run's curve (dimensionless, so runs are comparable)."""
+
+    as_of_date: date
+    cumulative_return: float
+
+
+class RunComparisonView(_Schema):
+    """One run's stance in a multi-run comparison (SP 5.23).
+
+    ``points`` is a cumulative *return* series rather than a net-value series:
+    net values carry a currency and an initial capital, so plotting an HKD run
+    against a USD run would compare amounts that mean different things.
+    """
+
+    run_id: str
+    status: str
+    strategy: str
+    strategy_version: str
+    code_version: str
+    data_cutoff: date
+    currency: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    point_count: int = 0
+    #: Scoreable metrics exist; the curve can still be present when they do not.
+    available: bool = False
+    unavailable_reason: str | None = None
+    metrics: PerformanceMetricsView | None = None
+    points: list[ComparisonPointView] = Field(default_factory=list)
+
+
+class BacktestComparisonResponse(_Schema):
+    """Several runs' curves and metrics side by side, with the caveats (SP 5.23)."""
+
+    runs: list[RunComparisonView] = Field(default_factory=list)
+    #: Reasons the runs are not strictly like-for-like (currency, range, code).
+    warnings: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)

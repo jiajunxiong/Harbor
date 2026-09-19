@@ -6,11 +6,13 @@
  * (`default_page_limit` 50, `max_page_limit` 200 in `ApiSettings`).
  */
 
-import { buildQuery, getJson } from "./client";
+import { buildQuery, getFile, getJson, type DownloadedFile } from "./client";
 import type {
   ApiInfo,
+  BacktestComparisonResponse,
   BacktestDrawdownResponse,
   BacktestMetricsResponse,
+  BacktestReplayResponse,
   BacktestRunDetail,
   BacktestRunFilters,
   BacktestRunSummary,
@@ -182,4 +184,42 @@ export function fetchRejectedTrades(
     `/backtests/${encodeURIComponent(runId)}/rejected-trades${search}`,
     options,
   );
+}
+
+/* -- replay, export and comparison (SP 5.21-5.23) ----------------------- */
+
+/** A run's replay manifest and its agreement with runs sharing its inputs. */
+export function fetchReplay(
+  runId: string,
+  options?: { signal?: AbortSignal },
+): Promise<BacktestReplayResponse> {
+  return getJson<BacktestReplayResponse>(
+    `/backtests/${encodeURIComponent(runId)}/replay`,
+    options,
+  );
+}
+
+/**
+ * Download a run's server-rendered report (SP 5.22).
+ *
+ * Returned as a file rather than a URL so the request carries the Authorization
+ * header: the report is rendered on the server, and the token never appears in a
+ * link.
+ */
+export function downloadReport(
+  runId: string,
+  reportFormat: string,
+  options?: { signal?: AbortSignal },
+): Promise<DownloadedFile> {
+  const search = buildQuery({ format: reportFormat });
+  return getFile(`/backtests/${encodeURIComponent(runId)}/report${search}`, options);
+}
+
+/** Several runs' rebased curves and metrics, with the caveats (SP 5.23). */
+export function fetchComparison(
+  runIds: readonly string[],
+  options?: { signal?: AbortSignal },
+): Promise<BacktestComparisonResponse> {
+  const search = buildQuery({ run_ids: runIds.join(",") });
+  return getJson<BacktestComparisonResponse>(`/backtests/compare${search}`, options);
 }

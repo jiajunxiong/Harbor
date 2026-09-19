@@ -14,6 +14,7 @@ import { App } from "./App";
 import {
   backtestRun,
   backtestRunDetail,
+  comparisonResponse,
   fetchCalls,
   jsonResponse,
   pageOf,
@@ -29,6 +30,7 @@ interface StubOptions {
   runs?: Record<string, unknown>[];
   filters?: Record<string, unknown>;
   detail?: Record<string, unknown>;
+  comparison?: Record<string, unknown>;
   failure?: { code: string; status: number };
 }
 
@@ -60,6 +62,9 @@ function stubApi(options: StubOptions = {}) {
     }
     if (url.includes("/backtests/filters")) {
       return Promise.resolve(jsonResponse(options.filters ?? FILTERS_OK));
+    }
+    if (url.includes("/backtests/compare")) {
+      return Promise.resolve(jsonResponse(options.comparison ?? comparisonResponse()));
     }
     if (isRunDetailRequest(url)) {
       return Promise.resolve(jsonResponse(options.detail ?? backtestRunDetail()));
@@ -227,5 +232,29 @@ describe("dashboard smoke test", () => {
 
     expect(window.location.hash).toBe("#/runs/bt-0002");
     expect(await screen.findByText(/运行详情/)).toBeInTheDocument();
+  });
+  it("compares the ticked runs and puts the selection in the URL", async () => {
+    stubApi({ runs: TWO_RUNS, comparison: comparisonResponse() });
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId("select-run-bt-0001"));
+    fireEvent.click(screen.getByTestId("select-run-bt-0002"));
+    expect(screen.getByTestId("compare-selection")).toHaveTextContent("已选 2 / 5 次运行");
+
+    fireEvent.click(screen.getByTestId("compare-selected"));
+
+    expect(window.location.hash).toBe("#/runs/compare?ids=bt-0001%2Cbt-0002");
+    expect(await screen.findByText("多运行对比")).toBeInTheDocument();
+  });
+
+  it("cannot compare a single run", async () => {
+    stubApi({ runs: TWO_RUNS });
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId("select-run-bt-0001"));
+
+    // The server refuses fewer than two runs, so the button stays disabled
+    // rather than sending a request that would be rejected.
+    expect(screen.getByTestId("compare-selected")).toBeDisabled();
   });
 });

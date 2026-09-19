@@ -15,10 +15,11 @@ the chart payload only).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from datetime import date
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 
 from harbor.api.deps import get_read_store
 from harbor.api.downsample import largest_triangle_three_buckets
@@ -34,11 +35,15 @@ from harbor.api.pagination import (
 from harbor.api.read_store import ReadStore, Row
 from harbor.api.redaction import redact_document
 from harbor.api.schemas import (
+    BacktestComparisonResponse,
     BacktestDrawdownResponse,
     BacktestMetricsResponse,
+    BacktestReplayResponse,
     BacktestRunDetail,
     BacktestRunFilters,
     BacktestRunSummary,
+    ComparisonPointView,
+    ConsistencyIssueView,
     DrawdownEventView,
     FillPage,
     FillRow,
@@ -48,19 +53,26 @@ from harbor.api.schemas import (
     RejectedTradeResponse,
     RejectedTradeRow,
     RejectionReasonCount,
+    ReplayManifestView,
+    RunComparisonView,
     RunCounts,
+    SiblingConsistencyView,
 )
 from harbor.api.security import require_readonly
-from harbor.core.backtest_domain import BacktestStatus, Market, NetValue
+from harbor.core.backtest_domain import BacktestStatus, Currency, Market, NetValue
 from harbor.core.drawdown_events import DrawdownConfig, DrawdownError
 from harbor.core.performance_metrics import MetricsError
+from harbor.services.backtest import REPORT_FORMATS, REPORT_MEDIA_TYPES
 from harbor.services.backtest_analytics import (
     BacktestAnalyticsError,
     DrawdownInterval,
+    RunComparison,
     drawdown_events_from_net_values,
     metrics_from_net_values,
     net_values_from_rows,
+    run_comparison,
 )
+from harbor.services.backtest_replay import MAX_SIBLINGS, BacktestReplayError
 from harbor.storage.backtest_repositories import RUN_SORT_FIELDS, RUN_SORT_ORDERS
 
 #: The list's default order, matching the pre-5.13 contract (newest first).
@@ -218,6 +230,160 @@ def read_run_filters(store: ReadStore = Depends(get_read_store)) -> BacktestRunF
         sort_fields=list(RUN_SORT_FIELDS),
         sort_orders=list(RUN_SORT_ORDERS),
     )
+
+
+# Declared before ``/{run_id}`` for the same reason as ``/filters``: a literal
+# path must win the match, or ``compare`` would be read as a run id.
+@router.get(
+    "/compare",
+    response_model=BacktestComparisonResponse,
+    summary="Compare several runs' curves and metrics",
+)
+def compare_backtest_runs(
+    run_ids: str = Query(
+        ...,
+        description="Comma-separated backtest run ids to compare (2 to 5, unique).",
+    ),
+    store: ReadStore = Depends(get_read_store),
+) -> BacktestComparisonResponse:
+    """Return several runs' rebased curves and metrics side by side (SP 5.23).
+
+    The curves are cumulative returns measured from each run's own first net
+    value — the same baseline SP 5.16 uses — because a return is dimensionless
+    while a net value is not: laying an HKD run beside a USD run would compare
+    amounts that mean different things, and converting them would need an FX
+    rate this data does not carry. Anything that makes the comparison less
+    like-for-like (currencies, date ranges, data cutoffs, code versions) is
+    reported as a warning instead of being silently averaged over.
+
+    Runs are deliberately not subsampled here: a chart of several curves cannot
+    show a subsample honestly without also aligning the runs, so the number of
+    runs is capped instead and every point is real.
+    """
+    requested = [run_id.strip() for run_id in run_ids.split(",") if run_id.strip()]
+    if len(requested) < 2:
+        raise ApiError(
+            status_code=422,
+            code="too_few_runs",
+            detail="At least two run ids are required to compare.",
+        )
+    if len(requested) > MAX_COMPARISON_RUNS:
+        raise ApiError(
+            status_code=422,
+            code="too_many_runs",
+            detail=f"At most {MAX_COMPARISON_RUNS} runs can be compared at once.",
+        )
+    duplicates = sorted({run_id for run_id in requested if requested.count(run_id) > 1})
+    if duplicates:
+        raise ApiError(
+            status_code=422,
+            code="duplicate_run_ids",
+            detail=f"Each run may appear once; repeated: {', '.join(duplicates)}.",
+        )
+
+    rows_by_run: list[Row] = []
+    for run_id in requested:
+        rows_by_run.append(_require_run(store, run_id))
+
+    comparisons = [run_comparison(run_id, store.list_net_values(run_id)) for run_id in requested]
+    return BacktestComparisonResponse(
+        runs=[
+            _comparison_view(row, comparison)
+            for row, comparison in zip(rows_by_run, comparisons, strict=True)
+        ],
+        warnings=list(_comparison_warnings(comparisons)),
+        notes=list(COMPARISON_NOTES),
+    )
+
+
+#: How many runs one comparison request may ask for.
+MAX_COMPARISON_RUNS = 5
+
+COMPARISON_NOTES = (
+    "曲线以各运行自身首个净值点为基准，归一为累计收益；基准与 SP 5.16 的累计收益一致，"
+    "因此不同本金规模可以直接比较曲线形状与幅度。",
+    "不提供跨币种金额比较：本项目数据没有汇率表，任何隐式 1:1 换算都会被拒绝，"
+    "所以比较的是收益率而不是净值金额。",
+    "单指标最优不等于策略更优；样本期、市场与标的不同时，指标之间不具备可比性。",
+)
+
+
+def _comparison_view(row: Row, comparison: RunComparison) -> RunComparisonView:
+    """Render one run's comparison entry as the published schema."""
+    return RunComparisonView(
+        run_id=comparison.run_id,
+        status=str(row["status"]),
+        strategy=str(row["strategy"]),
+        strategy_version=str(row["strategy_version"]),
+        code_version=str(row["code_version"]),
+        data_cutoff=row["data_cutoff"],
+        currency=comparison.currency.value if comparison.currency is not None else None,
+        start_date=comparison.start_date,
+        end_date=comparison.end_date,
+        point_count=comparison.point_count,
+        available=comparison.available,
+        unavailable_reason=comparison.unavailable_reason,
+        metrics=(
+            PerformanceMetricsView.model_validate(asdict(comparison.metrics))
+            if comparison.metrics is not None
+            else None
+        ),
+        points=[
+            ComparisonPointView(
+                as_of_date=point.as_of_date, cumulative_return=point.cumulative_return
+            )
+            for point in comparison.points
+        ],
+    )
+
+
+def _currency_label(currency: Currency | None) -> str:
+    """Render a run's currency for a warning message."""
+    return currency.value if currency is not None else "未记录"
+
+
+def _comparison_warnings(comparisons: Sequence[RunComparison]) -> tuple[str, ...]:
+    """Report what makes these runs not strictly like-for-like (SP 5.23).
+
+    Each difference is stated as a fact about the selection. A reader comparing
+    runs across currencies, periods or code versions is doing something
+    legitimate, but the page must not let them believe the runs are equivalent.
+    """
+    warnings: list[str] = []
+
+    currencies = sorted({_currency_label(item.currency) for item in comparisons})
+    if len(currencies) > 1:
+        warnings.append(
+            f"所选运行的基准币种不同（{'、'.join(currencies)}）；曲线为累计收益，"
+            "币种不同时不可据此比较金额规模。"
+        )
+
+    ranges = sorted(
+        {
+            f"{item.start_date}~{item.end_date}"
+            for item in comparisons
+            if item.start_date is not None and item.end_date is not None
+        }
+    )
+    if len(ranges) > 1:
+        warnings.append(
+            f"所选运行的时间区间不同（{'、'.join(ranges)}）；横轴为真实日期，未做区间对齐。"
+        )
+
+    missing = [item.run_id for item in comparisons if not item.points]
+    if missing:
+        warnings.append(
+            f"{len(missing)} 个运行没有可绘制的净值序列（{'、'.join(missing)}）；"
+            "它们只出现在列表与指标中，不在曲线上。"
+        )
+
+    no_metrics = [item.run_id for item in comparisons if item.metrics is None and item.points]
+    if no_metrics:
+        warnings.append(
+            f"{len(no_metrics)} 个运行有净值曲线但缺少可计算指标（{'、'.join(no_metrics)}）；"
+            "对应指标为空原因见该运行详情。"
+        )
+    return tuple(warnings)
 
 
 @router.get("/{run_id}", response_model=BacktestRunDetail, summary="Show one backtest run")
@@ -378,6 +544,123 @@ def read_drawdowns(
         currency=snapshots[0].currency.value,
         thresholds=list(config.thresholds),
         events=[_drawdown_event(interval) for interval in intervals],
+    )
+
+
+@router.get(
+    "/{run_id}/replay",
+    response_model=BacktestReplayResponse,
+    summary="A run's replay manifest and its agreement with runs sharing its inputs",
+)
+def read_replay_consistency(
+    run_id: str,
+    store: ReadStore = Depends(get_read_store),
+) -> BacktestReplayResponse:
+    """Return a run's replay manifest and the sibling consistency check (SP 5.21).
+
+    The manifest is *derived* from the persisted run and config snapshot rather
+    than stored, so what is shown is what the data still supports. Sibling runs
+    are those recording the same config hash, code version and data cutoff —
+    runs that claim to be the same experiment — and each is compared against
+    this one with the CLI's own consistency check.
+
+    A fingerprint alone cannot prove two runs are identical: it covers the
+    configuration, not the data the runs actually read. Both facts are therefore
+    reported, and a disagreement is described as a difference to investigate
+    rather than a failure.
+    """
+    _require_run(store, run_id)
+    try:
+        consistency = store.replay_consistency(run_id, max_siblings=MAX_SIBLINGS)
+    except BacktestReplayError as error:
+        raise ApiError(
+            status_code=422,
+            code="replay_manifest_unavailable",
+            detail=str(error),
+        ) from error
+    manifest = consistency.manifest
+    return BacktestReplayResponse(
+        run_id=run_id,
+        manifest=ReplayManifestView(
+            run_id=manifest.run_id,
+            config_hash=manifest.config_hash,
+            code_version=manifest.code_version,
+            start_date=manifest.start_date,
+            end_date=manifest.end_date,
+            data_cutoff=manifest.data_cutoff,
+            fx_source=manifest.fx_source,
+            calendar_version=manifest.calendar_version,
+            random_seed=manifest.random_seed,
+            fingerprint=manifest.fingerprint,
+        ),
+        siblings=[
+            SiblingConsistencyView(
+                run_id=sibling.run_id,
+                status=sibling.status,
+                same_status=sibling.same_status,
+                consistent=sibling.consistent,
+                outcome_agrees=sibling.outcome_agrees,
+                difference_count=sibling.difference_count,
+                differences=[
+                    ConsistencyIssueView(
+                        section=issue.section,
+                        location=issue.location,
+                        expected=issue.expected,
+                        actual=issue.actual,
+                    )
+                    for issue in sibling.differences
+                ],
+            )
+            for sibling in consistency.siblings
+        ],
+        sibling_total=consistency.sibling_total,
+        truncated=consistency.truncated,
+        notes=list(consistency.notes),
+    )
+
+
+@router.get(
+    "/{run_id}/report",
+    summary="Download a run's research report",
+    response_class=Response,
+    responses={
+        200: {
+            "content": {media_type: {} for media_type in sorted(REPORT_MEDIA_TYPES.values())},
+            "description": "The rendered report in the requested format.",
+        }
+    },
+)
+def download_report(
+    run_id: str,
+    format: str = Query(
+        default="json",
+        description="Report format; see report_formats in /api/v1/version.",
+    ),
+    store: ReadStore = Depends(get_read_store),
+) -> Response:
+    """Render a run's report server-side and return it as a download (SP 5.22).
+
+    The document is produced by the same renderer ``harbor-cli backtest report``
+    writes, so a downloaded file and a terminal report cannot disagree about a
+    number. Rendering happens on the server: the browser never recomputes a
+    figure, and the only formats offered are the ones this API declares in
+    ``/api/v1/version``.
+    """
+    if format not in REPORT_FORMATS:
+        raise ApiError(
+            status_code=422,
+            code="invalid_report_format",
+            detail=(
+                f"format must be one of {', '.join(REPORT_FORMATS)}; got {format!r}. "
+                "The supported formats are published at /api/v1/version."
+            ),
+        )
+    _require_run(store, run_id)
+    report = store.render_report(run_id, format)
+    return Response(
+        content=report.content,
+        media_type=report.media_type,
+        headers={"Content-Disposition": f'attachment; filename="{report.filename}"'},
     )
 
 

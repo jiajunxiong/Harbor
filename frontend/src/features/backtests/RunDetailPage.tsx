@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import { useBacktestRun } from "../../api/hooks";
 import { ErrorState, LoadingState } from "../../components/States";
 import { StatusBadge } from "../../components/StatusBadge";
@@ -8,6 +10,8 @@ import { FillsPanel } from "./FillsPanel";
 import { MetricCards } from "./MetricCards";
 import { NetValueChart } from "./NetValueChart";
 import { RejectionsPanel } from "./RejectionsPanel";
+import { ReplayPanel } from "./ReplayPanel";
+import { ReportExport } from "./ReportExport";
 import { RunOverview } from "./RunOverview";
 
 const TAB_LABELS: Record<RunTab, string> = {
@@ -15,6 +19,7 @@ const TAB_LABELS: Record<RunTab, string> = {
   performance: "绩效与回撤",
   trades: "成交与拒单",
   attribution: "持仓与归因",
+  replay: "重放与导出",
 };
 
 export interface RunDetailPageProps {
@@ -22,6 +27,7 @@ export interface RunDetailPageProps {
   tab: RunTab;
   onTabChange: (tab: RunTab) => void;
   onBack: () => void;
+  onOpenRun?: (runId: string) => void;
 }
 
 /**
@@ -32,8 +38,11 @@ export interface RunDetailPageProps {
  * the trade list does not blank the equity curve, and each panel reports its own
  * error with its own retry.
  */
-export function RunDetailPage({ runId, tab, onTabChange, onBack }: RunDetailPageProps) {
+export function RunDetailPage({ runId, tab, onTabChange, onBack, onOpenRun }: RunDetailPageProps) {
   const run = useBacktestRun(runId);
+  // The annotated drawdown threshold lives here so the curve and the drawdown
+  // table describe the same intervals (SP 5.24).
+  const [bandThreshold, setBandThreshold] = useState<number | null>(null);
 
   return (
     <>
@@ -97,17 +106,25 @@ export function RunDetailPage({ runId, tab, onTabChange, onBack }: RunDetailPage
                 <span className="card__hint">SP 5.15 · 可缩放时间范围</span>
               </div>
               <div className="card__body">
-                <NetValueChart runId={runId} />
+                <NetValueChart
+                  runId={runId}
+                  bandThreshold={bandThreshold}
+                  onThresholdChange={setBandThreshold}
+                />
               </div>
             </div>
 
             <div className="card">
               <div className="card__header">
                 <span className="card__title">回撤事件</span>
-                <span className="card__hint">SP 5.17 · 按阈值触发</span>
+                <span className="card__hint">SP 5.17 · 按阈值触发，可与曲线联动</span>
               </div>
               <div className="card__body">
-                <DrawdownTable runId={runId} />
+                <DrawdownTable
+                  runId={runId}
+                  selectedThreshold={bandThreshold}
+                  onSelectThreshold={setBandThreshold}
+                />
               </div>
             </div>
           </>
@@ -164,6 +181,34 @@ export function RunDetailPage({ runId, tab, onTabChange, onBack }: RunDetailPage
               />
             ) : null}
             {run.data !== undefined ? <AttributionPanel run={run.data} /> : null}
+          </>
+        ) : null}
+
+        {tab === "replay" ? (
+          <>
+            <div className="card">
+              <div className="card__header">
+                <span className="card__title">报告导出</span>
+                <span className="card__hint">SP 5.22 · 服务端渲染</span>
+              </div>
+              <div className="card__body">
+                <ReportExport runId={runId} />
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card__header">
+                <span className="card__title">重放清单与一致性</span>
+                <span className="card__hint">SP 5.21 · 相同输入指纹是否一致</span>
+              </div>
+              <div className="card__body">
+                <ReplayPanel
+                  runId={runId}
+                  runStatus={run.data?.status ?? ""}
+                  onOpenRun={onOpenRun ?? (() => undefined)}
+                />
+              </div>
+            </div>
           </>
         ) : null}
       </div>

@@ -17,6 +17,12 @@ from typing import Any, Protocol
 
 from sqlalchemy import Connection, func, select
 
+from harbor.services.backtest import RenderedReport, render_backtest_report
+from harbor.services.backtest_replay import (
+    MAX_SIBLINGS,
+    ReplayConsistency,
+    build_replay_consistency,
+)
 from harbor.storage.backtest_repositories import BacktestRepository
 from harbor.storage.models import (
     BacktestFill,
@@ -93,6 +99,12 @@ class ReadStore(Protocol):
     ) -> list[tuple[str, int]]: ...
 
     def run_filter_options(self) -> tuple[list[str], list[str]]: ...
+
+    def render_report(self, run_id: str, report_format: str) -> RenderedReport: ...
+
+    def replay_consistency(
+        self, run_id: str, *, max_siblings: int = MAX_SIBLINGS
+    ) -> ReplayConsistency: ...
 
     def list_validation_runs(self, *, limit: int, offset: int) -> tuple[list[Row], int]: ...
 
@@ -243,6 +255,26 @@ class SqlReadStore:
             for value in self._connection.execute(repository.distinct_run_strategies()).scalars()
         ]
         return statuses, strategies
+
+    # -- derived views ---------------------------------------------------
+
+    def render_report(self, run_id: str, report_format: str) -> RenderedReport:
+        """Render a run's research report with the CLI's own renderer (SP 5.22).
+
+        The rendering happens in the service layer, so a downloaded report and a
+        terminal report are produced by one implementation.
+        """
+        return render_backtest_report(
+            connection=self._connection, run_id=run_id, report_format=report_format
+        )
+
+    def replay_consistency(
+        self, run_id: str, *, max_siblings: int = MAX_SIBLINGS
+    ) -> ReplayConsistency:
+        """Derive a run's replay manifest and compare it with its siblings (SP 5.21)."""
+        return build_replay_consistency(
+            connection=self._connection, run_id=run_id, max_siblings=max_siblings
+        )
 
     def list_validation_runs(self, *, limit: int, offset: int) -> tuple[list[Row], int]:
         """Return one page of validation runs, newest first (SP 5.8)."""

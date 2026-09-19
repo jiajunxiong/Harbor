@@ -14,6 +14,7 @@ import {
   buildRunListSearch,
   DEFAULT_PAGE_SIZE,
   hasActiveFilters,
+  MAX_COMPARISON_RUNS,
   parseHash,
   parseRunListSelection,
   selectionToQuery,
@@ -166,5 +167,54 @@ describe("hash routes", () => {
     if (list.kind === "runs") {
       expect(list.selection.status).toBe("FAILED");
     }
+  });
+});
+
+describe("comparison routes", () => {
+  it("parses a comparison link into its run ids", () => {
+    expect(parseHash("#/runs/compare?ids=bt-1,bt-2")).toEqual({
+      kind: "comparison",
+      runIds: ["bt-1", "bt-2"],
+    });
+  });
+
+  it("round-trips a comparison link", () => {
+    const route = { kind: "comparison", runIds: ["bt-1", "bt-2"] } as const;
+
+    expect(parseHash(buildHash(route))).toEqual(route);
+  });
+
+  it("drops repeats, because the server refuses a duplicated run", () => {
+    const route = parseHash("#/runs/compare?ids=bt-1,bt-1,bt-2");
+
+    expect(route).toEqual({ kind: "comparison", runIds: ["bt-1", "bt-2"] });
+  });
+
+  it("caps the selection at the bound the server accepts", () => {
+    const route = parseHash("#/runs/compare?ids=a,b,c,d,e,f,g");
+
+    expect(route.kind).toBe("comparison");
+    if (route.kind === "comparison") {
+      expect(route.runIds).toHaveLength(MAX_COMPARISON_RUNS);
+    }
+  });
+
+  it("keeps an empty selection as a comparison, so the page can explain it", () => {
+    expect(parseHash("#/runs/compare")).toEqual({ kind: "comparison", runIds: [] });
+  });
+
+  it("treats the literal compare segment as the comparison, not as a run id", () => {
+    // The same precedence rule the API applies to `/backtests/compare`.
+    const route = parseHash("#/runs/compare?ids=bt-1,bt-2");
+
+    expect(route.kind).toBe("comparison");
+  });
+
+  it("still parses a run whose id merely starts with compare", () => {
+    expect(parseHash("#/runs/compare-two")).toEqual({
+      kind: "run",
+      runId: "compare-two",
+      tab: "overview",
+    });
   });
 });

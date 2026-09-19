@@ -42,7 +42,7 @@ from harbor.core.drawdown_events import (
     DrawdownEvent,
     compute_drawdown_events,
 )
-from harbor.core.performance_metrics import MetricsConfig, PerformanceMetrics
+from harbor.core.performance_metrics import MetricsConfig, MetricsError, PerformanceMetrics
 from harbor.core.performance_metrics import compute_performance_metrics as _compute_metrics
 from harbor.core.valuation import DailyValuation
 
@@ -216,4 +216,127 @@ def _daily_valuation(snapshot: NetValue) -> DailyValuation:
         realized_fees=(CashBalance(currency=snapshot.currency, amount=snapshot.fees_paid),),
         fx_pnl=0.0,
         net_value=snapshot,
+    )
+
+
+@dataclass(frozen=True)
+class ComparisonPoint:
+    """One point of a run's curve, rebased for comparison (SP 5.23)."""
+
+    as_of_date: date
+    cumulative_return: float
+
+
+@dataclass(frozen=True)
+class RunComparison:
+    """One run's contribution to a multi-run comparison (SP 5.23).
+
+    ``points`` is deliberately a *cumulative return* series rather than a net
+    value series. Net values carry a currency and an initial capital, and
+    plotting an HKD run against a USD run on one axis would compare amounts that
+    mean different things — and would need an FX rate this data does not have.
+    A return is dimensionless, so rebasing each run on its own first valuation
+    makes the curves comparable while stating exactly what was done.
+    """
+
+    run_id: str
+    currency: Currency | None
+    start_date: date | None
+    end_date: date | None
+    point_count: int
+    points: tuple[ComparisonPoint, ...]
+    metrics: PerformanceMetrics | None
+    unavailable_reason: str | None
+
+    @property
+    def available(self) -> bool:
+        """Whether this run has a usable curve and metrics."""
+        return self.metrics is not None
+
+
+def comparison_series_from_rows(rows: Sequence[Mapping[str, Any]]) -> tuple[ComparisonPoint, ...]:
+    """Rebase a run's persisted net values to a cumulative return series (SP 5.23).
+
+    Raises:
+        BacktestAnalyticsError: If the series cannot be reconstructed, or its
+            first value is not positive (there is nothing to rebase onto).
+    """
+    return comparison_series(net_values_from_rows(rows))
+
+
+def comparison_series(snapshots: Sequence[NetValue]) -> tuple[ComparisonPoint, ...]:
+    """Rebase an already-rebuilt series to cumulative return (SP 5.23).
+
+    ``cumulative_return`` is measured from the run's own first valuation, which
+    is the same baseline the SP 5.16 cumulative return uses, so the curve and the
+    metric card cannot disagree about a run's return.
+
+    Raises:
+        BacktestAnalyticsError: If the series is empty or its first value is not
+            positive.
+    """
+    if not snapshots:
+        raise BacktestAnalyticsError("This run has no persisted net values to rebase.")
+    base = snapshots[0].total_value
+    if base <= 0:
+        raise BacktestAnalyticsError(
+            "This run's first net value is not positive, so its curve cannot be "
+            "rebased to a cumulative return."
+        )
+    return tuple(
+        ComparisonPoint(
+            as_of_date=snapshot.as_of_date,
+            cumulative_return=snapshot.total_value / base - 1.0,
+        )
+        for snapshot in snapshots
+    )
+
+
+def run_comparison(run_id: str, rows: Sequence[Mapping[str, Any]]) -> RunComparison:
+    """Build one run's comparison entry from its persisted net values (SP 5.23).
+
+    A run with no net values (a failed run) yields an entry with no curve and a
+    reason, so it still appears in the comparison as an absent run rather than
+    disappearing from a list the reader explicitly chose. A run whose curve is
+    fine but whose Sharpe ratio is undefined keeps its curve and reports the
+    metric reason separately — the two facts are independent.
+    """
+    try:
+        snapshots = net_values_from_rows(rows)
+    except BacktestAnalyticsError as error:
+        return RunComparison(
+            run_id=run_id,
+            currency=None,
+            start_date=None,
+            end_date=None,
+            point_count=0,
+            points=(),
+            metrics=None,
+            unavailable_reason=str(error),
+        )
+
+    first = snapshots[0]
+    try:
+        points = comparison_series(snapshots)
+        curve_reason: str | None = None
+    except BacktestAnalyticsError as error:
+        points = ()
+        curve_reason = str(error)
+
+    try:
+        metrics: PerformanceMetrics | None = metrics_from_net_values(snapshots)
+        metric_reason: str | None = None
+    except MetricsError as error:
+        metrics = None
+        metric_reason = str(error)
+
+    return RunComparison(
+        run_id=run_id,
+        currency=first.currency,
+        start_date=first.as_of_date,
+        end_date=snapshots[-1].as_of_date,
+        point_count=len(snapshots),
+        points=points,
+        metrics=metrics,
+        unavailable_reason=curve_reason or metric_reason,
     )

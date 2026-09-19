@@ -58,6 +58,13 @@ const COLUMNS: readonly Column<DrawdownEventView>[] = [
 
 export interface DrawdownTableProps {
   runId: string;
+  /**
+   * The threshold currently annotated on the curve, or `null` when the chart has
+   * not chosen one. Selecting a row re-annotates the curve with that row's
+   * threshold (SP 5.24 chart/table linkage).
+   */
+  selectedThreshold?: number | null;
+  onSelectThreshold?: (threshold: number) => void;
 }
 
 /**
@@ -69,7 +76,7 @@ export interface DrawdownTableProps {
  * is false because position values and FX P&L are not persisted, and the note
  * below says so rather than leaving the column looking merely empty.
  */
-export function DrawdownTable({ runId }: DrawdownTableProps) {
+export function DrawdownTable({ runId, selectedThreshold, onSelectThreshold }: DrawdownTableProps) {
   const query = useDrawdowns(runId);
 
   if (query.isPending) {
@@ -107,14 +114,43 @@ export function DrawdownTable({ runId }: DrawdownTableProps) {
 
   const detailAvailable = payload.events.some((event) => event.position_detail_available);
 
+  const interactive = onSelectThreshold !== undefined;
+  const columns: readonly Column<DrawdownEventView>[] = interactive
+    ? [
+        {
+          key: "select",
+          header: "标注",
+          render: (event) => (
+            <button
+              type="button"
+              className="link-button"
+              data-testid={`select-threshold-${event.threshold}`}
+              aria-pressed={event.threshold === selectedThreshold}
+              onClick={() => {
+                onSelectThreshold(event.threshold);
+              }}
+            >
+              {event.threshold === selectedThreshold ? "已在曲线上标注" : "在曲线上标注"}
+            </button>
+          ),
+        },
+        ...COLUMNS,
+      ]
+    : COLUMNS;
+
   return (
     <>
       <DataTable
-        columns={COLUMNS}
+        columns={columns}
         rows={payload.events}
         rowKey={(event) => `${event.threshold}-${event.start_date}-${event.trough_date}`}
         caption={`共 ${payload.events.length} 个回撤事件`}
       />
+      {interactive ? (
+        <p className="card__hint" data-testid="drawdown-linkage-note">
+          选择某一行的「在曲线上标注」，上方净值曲线会改标该阈值的回撤区间；两者使用同一批服务端事件。
+        </p>
+      ) : null}
       {!detailAvailable ? (
         <p className="notice" data-testid="drawdown-position-note">
           本运行未持久化持仓明细与汇率损益，因此每个回撤事件只能给出组合层面的峰谷区间，无法拆分到个股与费用。

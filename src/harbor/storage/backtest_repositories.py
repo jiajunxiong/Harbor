@@ -292,6 +292,85 @@ class BacktestRepository:
         """Return a query for the strategy names actually present (SP 5.13)."""
         return select(BacktestRun.strategy).distinct().order_by(BacktestRun.strategy.asc())
 
+    @staticmethod
+    def _shared_input_criteria(
+        *,
+        config_hash: str,
+        code_version: str,
+        data_cutoff: date,
+        exclude_run_id: str | None = None,
+    ) -> tuple[Any, ...]:
+        """Build the WHERE criteria for runs claiming the same replay inputs (SP 5.21).
+
+        The replay manifest fingerprint (SP 2.61) is derived rather than stored,
+        so siblings are found through the recorded inputs it is built from. The
+        config hash already covers the strategy, markets and date range, so this
+        trio identifies "the same experiment" as far as the database can tell.
+        """
+        criteria: list[Any] = [
+            BacktestRun.config_hash == config_hash,
+            BacktestRun.code_version == code_version,
+            BacktestRun.data_cutoff == data_cutoff,
+        ]
+        if exclude_run_id is not None:
+            criteria.append(BacktestRun.run_id != exclude_run_id)
+        return tuple(criteria)
+
+    def list_runs_sharing_inputs(
+        self,
+        *,
+        config_hash: str,
+        code_version: str,
+        data_cutoff: date,
+        exclude_run_id: str | None = None,
+        limit: int | None = None,
+    ) -> Select[Any]:
+        """Return a query for runs that claim the same replay inputs (SP 5.21).
+
+        Ordering is a total order (newest first, then ``run_id``) so a bounded
+        read is deterministic rather than depending on physical row order.
+        """
+        statement = (
+            select(BacktestRun)
+            .where(
+                *self._shared_input_criteria(
+                    config_hash=config_hash,
+                    code_version=code_version,
+                    data_cutoff=data_cutoff,
+                    exclude_run_id=exclude_run_id,
+                )
+            )
+            .order_by(BacktestRun.started_at.desc(), BacktestRun.run_id.desc())
+        )
+        return statement.limit(limit) if limit is not None else statement
+
+    def count_runs_sharing_inputs(
+        self,
+        *,
+        config_hash: str,
+        code_version: str,
+        data_cutoff: date,
+        exclude_run_id: str | None = None,
+    ) -> Select[Any]:
+        """Return a query for how many runs share the same inputs (SP 5.21).
+
+        The count feeds the same criteria as the list, so a bounded read can say
+        honestly how many siblings it left out instead of implying there are no
+        more.
+        """
+        return (
+            select(func.count())
+            .select_from(BacktestRun)
+            .where(
+                *self._shared_input_criteria(
+                    config_hash=config_hash,
+                    code_version=code_version,
+                    data_cutoff=data_cutoff,
+                    exclude_run_id=exclude_run_id,
+                )
+            )
+        )
+
     def _require_market(self, market: str, rows: Sequence[Mapping[str, Any]]) -> None:
         """Reject any result row that does not target the requested market."""
         if any(row.get("market") != market for row in rows):

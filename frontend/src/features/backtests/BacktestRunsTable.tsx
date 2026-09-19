@@ -8,6 +8,9 @@ export interface BacktestRunsTableProps {
   caption?: string;
   /** Opens a run's detail view; omit to render the list read-only. */
   onOpen?: (runId: string) => void;
+  /** Run ids currently ticked for comparison. */
+  selected?: ReadonlySet<string>;
+  onToggleSelect?: (runId: string) => void;
 }
 
 /**
@@ -31,6 +34,29 @@ function runIdColumn(onOpen: (runId: string) => void): Column<BacktestRunSummary
       >
         {run.run_id}
       </button>
+    ),
+  };
+}
+
+/** The tick-box column, present only while selection is wired up. */
+function selectionColumn(
+  selected: ReadonlySet<string>,
+  onToggleSelect: (runId: string) => void,
+): Column<BacktestRunSummary> {
+  return {
+    key: "select",
+    header: "对比",
+    render: (run) => (
+      <input
+        type="checkbox"
+        className="row-check"
+        data-testid={`select-run-${run.run_id}`}
+        aria-label={`选择运行 ${run.run_id} 用于对比`}
+        checked={selected.has(run.run_id)}
+        onChange={() => {
+          onToggleSelect(run.run_id);
+        }}
+      />
     ),
   };
 }
@@ -80,13 +106,23 @@ const COLUMNS: readonly Column<BacktestRunSummary>[] = [
 ];
 
 /** The run list table (MVP 5 / SP 5.12, SP 5.13). */
-export function BacktestRunsTable({ runs, caption, onOpen }: BacktestRunsTableProps) {
+export function BacktestRunsTable({
+  runs,
+  caption,
+  onOpen,
+  selected,
+  onToggleSelect,
+}: BacktestRunsTableProps) {
   const columns: readonly Column<BacktestRunSummary>[] =
     onOpen === undefined ? COLUMNS : [runIdColumn(onOpen), ...COLUMNS];
+  const withSelection =
+    selected === undefined || onToggleSelect === undefined
+      ? columns
+      : [selectionColumn(selected, onToggleSelect), ...columns];
 
   return (
     <DataTable
-      columns={columns}
+      columns={withSelection}
       rows={runs}
       rowKey={(run) => run.run_id}
       caption={caption ?? `共 ${runs.length} 次回测运行`}

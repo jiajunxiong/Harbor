@@ -15,6 +15,13 @@ import {
 
 export interface NetValueChartProps {
   runId: string;
+  /**
+   * The threshold whose intervals are shaded, or `null` to let the chart pick the
+   * deepest one. Lifted to the page so the drawdown table and the curve annotate
+   * the *same* intervals (SP 5.24 chart/table linkage).
+   */
+  bandThreshold?: number | null;
+  onThresholdChange?: (threshold: number) => void;
 }
 
 /**
@@ -28,14 +35,14 @@ export interface NetValueChartProps {
 const MAX_CHART_POINTS = 1200;
 
 /** The equity curve with its drawdown intervals shaded (MVP 5 / SP 5.15, SP 5.17). */
-export function NetValueChart({ runId }: NetValueChartProps) {
+export function NetValueChart({ runId, bandThreshold, onThresholdChange }: NetValueChartProps) {
   const theme = useTheme();
   const palette = theme?.palette ?? LIGHT_CHART_PALETTE;
   const ids = useId();
 
   const netValues = useNetValues(runId, MAX_CHART_POINTS);
   const drawdowns = useDrawdowns(runId);
-  const [threshold, setThreshold] = useState<number | null>(null);
+  const [ownThreshold, setThreshold] = useState<number | null>(null);
 
   const bands = useMemo(
     () => toDrawdownBands(drawdowns.data?.events ?? []),
@@ -46,7 +53,7 @@ export function NetValueChart({ runId }: NetValueChartProps) {
   // Shade the deepest threshold by default: shading every overlapping interval
   // would stack translucent rectangles over the same dates.
   const activeThreshold =
-    threshold ?? (thresholds.length > 0 ? Math.max(...thresholds) : undefined);
+    bandThreshold ?? ownThreshold ?? (thresholds.length > 0 ? Math.max(...thresholds) : undefined);
 
   const series = netValues.data ?? null;
   const option = useMemo(
@@ -100,9 +107,11 @@ export function NetValueChart({ runId }: NetValueChartProps) {
           value={activeThreshold === undefined ? "" : String(activeThreshold)}
           disabled={thresholds.length === 0}
           onChange={(event) => {
-            setThreshold(
-              event.target.value === "" ? null : Number.parseFloat(event.target.value),
-            );
+            const next = event.target.value === "" ? null : Number.parseFloat(event.target.value);
+            setThreshold(next);
+            if (next !== null) {
+              onThresholdChange?.(next);
+            }
           }}
         >
           {thresholds.length === 0 ? <option value="">无可用阈值</option> : null}

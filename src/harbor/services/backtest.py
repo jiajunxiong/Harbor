@@ -656,7 +656,9 @@ class BacktestReportError(ValueError):
     """Raised when a run's report cannot be rendered (SP 2.69)."""
 
 
-_REPORT_FORMATS = ("json", "csv", "html")
+#: The report formats that can be rendered (SP 2.69). Public so the read API can
+#: validate against the same tuple the renderer accepts instead of duplicating it.
+REPORT_FORMATS = ("json", "csv", "html")
 
 
 def build_report_artifact(*, connection: Connection, run_id: str) -> dict[str, Any]:
@@ -813,7 +815,7 @@ def _render_artifact(artifact: dict[str, Any], report_format: str) -> str:
     if report_format == "html":
         return render_html_report(artifact)
     raise BacktestReportError(
-        f"Unknown report format {report_format!r}; expected one of {sorted(_REPORT_FORMATS)}."
+        f"Unknown report format {report_format!r}; expected one of {sorted(REPORT_FORMATS)}."
     )
 
 
@@ -833,3 +835,55 @@ def report_backtest(*, connection: Connection, run_id: str, report_format: str) 
     """
     artifact = build_report_artifact(connection=connection, run_id=run_id)
     return _render_artifact(artifact, report_format)
+
+
+#: Media types for the three report formats (MVP 5 / SP 5.22).
+REPORT_MEDIA_TYPES = {
+    "json": "application/json",
+    "csv": "text/csv",
+    "html": "text/html",
+}
+
+
+@dataclass(frozen=True)
+class RenderedReport:
+    """A rendered report plus the headers needed to serve it as a download."""
+
+    report_format: str
+    content: str
+    media_type: str
+    filename: str
+
+
+def _safe_filename_part(value: str) -> str:
+    """Reduce a run id to characters that are safe inside a filename.
+
+    A run id is caller-supplied, and the filename ends up in a
+    ``Content-Disposition`` header: a path separator or a quote there could
+    change the header's meaning, so anything outside a conservative set is
+    replaced rather than escaped.
+    """
+    safe = [character if character.isalnum() or character in "-_." else "_" for character in value]
+    collapsed = "".join(safe).strip("._")
+    return collapsed or "run"
+
+
+def render_backtest_report(
+    *, connection: Connection, run_id: str, report_format: str
+) -> RenderedReport:
+    """Render a run's report and describe how to serve it (SP 5.22).
+
+    The document comes from the same renderer the CLI writes to stdout, so a
+    downloaded report and a terminal report cannot disagree.
+
+    Raises:
+        BacktestReportError: If the run is missing or the format is unknown.
+    """
+    # Render first: an unknown format must be rejected before it is used as a key.
+    content = report_backtest(connection=connection, run_id=run_id, report_format=report_format)
+    return RenderedReport(
+        report_format=report_format,
+        content=content,
+        media_type=REPORT_MEDIA_TYPES[report_format],
+        filename=f"harbor-backtest-{_safe_filename_part(run_id)}.{report_format}",
+    )

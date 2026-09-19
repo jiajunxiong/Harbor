@@ -14,17 +14,21 @@ import {
   fetchBacktestRun,
   fetchBacktestRunFilters,
   fetchBacktestRuns,
+  fetchComparison,
   fetchDrawdowns,
   fetchFills,
   fetchHealth,
   fetchNetValues,
   fetchRejectedTrades,
+  fetchReplay,
   type TradeQuery,
 } from "./endpoints";
 import type {
   ApiInfo,
+  BacktestComparisonResponse,
   BacktestDrawdownResponse,
   BacktestMetricsResponse,
+  BacktestReplayResponse,
   BacktestRunDetail,
   BacktestRunFilters,
   BacktestRunSummary,
@@ -51,6 +55,8 @@ export const queryKeys = {
   fills: (runId: string, query: TradeQuery) => ["backtests", "fills", runId, query] as const,
   rejectedTrades: (runId: string, query: TradeQuery) =>
     ["backtests", "rejected-trades", runId, query] as const,
+  replay: (runId: string) => ["backtests", "replay", runId] as const,
+  comparison: (runIds: readonly string[]) => ["backtests", "comparison", runIds] as const,
 };
 
 export function useApiInfo(): UseQueryResult<ApiInfo, Error> {
@@ -141,5 +147,31 @@ export function useRejectedTrades(
     queryFn: ({ signal }) => fetchRejectedTrades(runId as string, query, { signal }),
     enabled: runId !== null && runId !== "",
     placeholderData: (previous) => previous,
+  });
+}
+
+export function useReplay(runId: string | null): UseQueryResult<BacktestReplayResponse, Error> {
+  return useQuery({
+    queryKey: queryKeys.replay(runId ?? ""),
+    queryFn: ({ signal }) => fetchReplay(runId as string, { signal }),
+    enabled: runId !== null && runId !== "",
+  });
+}
+
+/**
+ * Several runs side by side (SP 5.23).
+ *
+ * The run ids are sorted into the key so the same selection always hits the same
+ * cache entry regardless of the order they were picked in.
+ */
+export function useComparison(runIds: readonly string[]): UseQueryResult<
+  BacktestComparisonResponse,
+  Error
+> {
+  const ordered = [...runIds].sort();
+  return useQuery({
+    queryKey: queryKeys.comparison(ordered),
+    queryFn: ({ signal }) => fetchComparison(ordered, { signal }),
+    enabled: ordered.length >= 2,
   });
 }

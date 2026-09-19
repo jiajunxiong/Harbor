@@ -8,6 +8,7 @@ import { ApiStatus } from "./components/ApiStatus";
 import { ResearchDisclaimer } from "./components/ResearchDisclaimer";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { BacktestRunsPage } from "./features/backtests/BacktestRunsPage";
+import { RunComparisonPage } from "./features/backtests/RunComparisonPage";
 import { RunDetailPage } from "./features/backtests/RunDetailPage";
 import { ThemeProvider } from "./theme/ThemeProvider";
 
@@ -24,6 +25,13 @@ function AppShell() {
   const openRun = useCallback(
     (runId: string) => {
       navigate({ kind: "run", runId, tab: "overview" });
+    },
+    [navigate],
+  );
+
+  const openComparison = useCallback(
+    (runIds: string[]) => {
+      navigate({ kind: "comparison", runIds });
     },
     [navigate],
   );
@@ -50,8 +58,10 @@ function AppShell() {
             selection={route.selection}
             onSelectionChange={openRunList}
             onOpenRun={openRun}
+            onCompare={openComparison}
           />
-        ) : (
+        ) : null}
+        {route.kind === "run" ? (
           <RunDetailPage
             runId={route.runId}
             tab={route.tab}
@@ -61,8 +71,18 @@ function AppShell() {
             onBack={() => {
               navigate(DEFAULT_ROUTE);
             }}
+            onOpenRun={openRun}
           />
-        )}
+        ) : null}
+        {route.kind === "comparison" ? (
+          <RunComparisonPage
+            runIds={route.runIds}
+            onOpenRun={openRun}
+            onBack={() => {
+              navigate(DEFAULT_ROUTE);
+            }}
+          />
+        ) : null}
       </main>
 
       <footer className="app__footer">

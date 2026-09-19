@@ -267,3 +267,150 @@ export function rejectedResponse(overrides: Record<string, unknown> = {}): Recor
     ...overrides,
   };
 }
+
+/* -- Stage 2 batch 2: replay, export and comparison (SP 5.21-5.23) ------ */
+
+/** The capability document, including the formats the API can render. */
+export function apiInfo(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    name: "harbor-api",
+    version: "0.1.0",
+    api_version: "v1",
+    read_only: true,
+    auth_required: true,
+    report_formats: ["json", "csv", "html"],
+    ...overrides,
+  };
+}
+
+/**
+ * A replay manifest with one sibling of each kind.
+ *
+ * The three siblings are the three outcomes a reader has to be able to tell
+ * apart: the same results and status (a genuine reproduction), the same result
+ * sections but a different status (the vacuous-agreement trap), and located
+ * differences.
+ */
+export function replayResponse(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    run_id: "bt-0001",
+    manifest: {
+      run_id: "bt-0001",
+      config_hash: "hash-1",
+      code_version: "abc1234",
+      start_date: "2020-01-01",
+      end_date: "2026-08-27",
+      data_cutoff: "2026-08-27",
+      fx_source: null,
+      calendar_version: null,
+      random_seed: null,
+      // A composite key, not a digest: config hash | code version | boundaries.
+      fingerprint: "hash-1|abc1234|2020-01-01|2026-08-27|2026-08-27|||",
+    },
+    siblings: [
+      {
+        run_id: "bt-0002",
+        status: "COMPLETED",
+        same_status: true,
+        consistent: true,
+        outcome_agrees: true,
+        difference_count: 0,
+        differences: [],
+      },
+      {
+        run_id: "bt-0003",
+        status: "FAILED",
+        same_status: false,
+        consistent: true,
+        outcome_agrees: false,
+        difference_count: 0,
+        differences: [],
+      },
+      {
+        run_id: "bt-0004",
+        status: "COMPLETED",
+        same_status: true,
+        consistent: false,
+        outcome_agrees: false,
+        difference_count: 2,
+        differences: [
+          { section: "net_values", location: "length", expected: "4", actual: "3" },
+          { section: "trades", location: "length", expected: "2", actual: "0" },
+        ],
+      },
+    ],
+    sibling_total: 3,
+    truncated: false,
+    notes: ["指纹不覆盖数据内容本身：两次运行可能指纹相同而数据已不同。"],
+    ...overrides,
+  };
+}
+
+/** A comparison payload: an HKD run, a USD run and a run with no valuations. */
+export function comparisonResponse(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const metrics = metricsResponse()["metrics"] as Record<string, unknown>;
+  return {
+    runs: [
+      {
+        run_id: "bt-0001",
+        status: "COMPLETED",
+        strategy: "momentum",
+        strategy_version: "1.0.0",
+        code_version: "abc1234",
+        data_cutoff: "2026-01-02",
+        currency: "HKD",
+        start_date: "2026-01-02",
+        end_date: "2026-01-09",
+        point_count: 2,
+        available: true,
+        unavailable_reason: null,
+        metrics,
+        points: [
+          { as_of_date: "2026-01-02", cumulative_return: 0 },
+          { as_of_date: "2026-01-09", cumulative_return: 0.26 },
+        ],
+      },
+      {
+        run_id: "bt-0002",
+        status: "COMPLETED",
+        strategy: "momentum",
+        strategy_version: "1.0.0",
+        code_version: "def5678",
+        data_cutoff: "2026-01-02",
+        currency: "USD",
+        start_date: "2026-02-02",
+        end_date: "2026-02-04",
+        point_count: 3,
+        available: true,
+        unavailable_reason: null,
+        metrics: { ...metrics, cumulative_return: 0.3, max_drawdown: 0.0714, sharpe_ratio: 1.6 },
+        points: [
+          { as_of_date: "2026-02-02", cumulative_return: 0 },
+          { as_of_date: "2026-02-03", cumulative_return: 0.4 },
+          { as_of_date: "2026-02-04", cumulative_return: 0.3 },
+        ],
+      },
+      {
+        run_id: "bt-0003",
+        status: "FAILED",
+        strategy: "momentum",
+        strategy_version: "1.0.0",
+        code_version: "abc1234",
+        data_cutoff: "2026-01-02",
+        currency: null,
+        start_date: null,
+        end_date: null,
+        point_count: 0,
+        available: false,
+        unavailable_reason: "This run has no persisted net values.",
+        metrics: null,
+        points: [],
+      },
+    ],
+    warnings: ["所选运行的基准币种不同（HKD、USD）；曲线为累计收益，币种不同时不可据此比较金额规模。"],
+    notes: ["曲线以各运行自身首个净值点为基准，归一为累计收益。"],
+    ...overrides,
+  };
+}

@@ -1,9 +1,14 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { useBacktestRuns } from "../../api/hooks";
 import type { BacktestRunSummary } from "../../api/types";
 import { EmptyState, ErrorState, LoadingState } from "../../components/States";
-import { hasActiveFilters, withSelection, type RunListSelection } from "../../app/route";
+import {
+  hasActiveFilters,
+  MAX_COMPARISON_RUNS,
+  withSelection,
+  type RunListSelection,
+} from "../../app/route";
 import { BacktestRunsTable } from "./BacktestRunsTable";
 import { BacktestStatusChart } from "./BacktestStatusChart";
 import { paginationSummary } from "./paginationSummary";
@@ -21,6 +26,7 @@ export interface BacktestRunsPageProps {
   selection: RunListSelection;
   onSelectionChange: (next: RunListSelection) => void;
   onOpenRun: (runId: string) => void;
+  onCompare: (runIds: string[]) => void;
 }
 
 /**
@@ -35,8 +41,12 @@ export function BacktestRunsPage({
   selection,
   onSelectionChange,
   onOpenRun,
+  onCompare,
 }: BacktestRunsPageProps) {
   const { limit, offset } = selection;
+  // Ticked runs are transient UI state, not part of the link: the *comparison
+  // view* is what gets a shareable URL once the reader has chosen.
+  const [ticked, setTicked] = useState<readonly string[]>([]);
 
   const query = useBacktestRuns({
     limit,
@@ -77,6 +87,20 @@ export function BacktestRunsPage({
       ? "读取中…"
       : `${paginationSummary(total, offset, runs.length)}${filtered ? "（已应用筛选）" : ""}`;
   const busy = query.isFetching;
+
+  const toggleTicked = useCallback((runId: string) => {
+    setTicked((current) => {
+      if (current.includes(runId)) {
+        return current.filter((id) => id !== runId);
+      }
+      // The server refuses a comparison above its cap, so the selection stops at
+      // the cap rather than building a request that would be rejected.
+      return current.length >= MAX_COMPARISON_RUNS ? current : [...current, runId];
+    });
+  }, []);
+
+  const tickedSet = useMemo(() => new Set(ticked), [ticked]);
+  const canCompare = ticked.length >= 2;
 
   return (
     <>
@@ -137,9 +161,41 @@ export function BacktestRunsPage({
           <BacktestRunsTable
             runs={runs}
             onOpen={onOpenRun}
+            selected={tickedSet}
+            onToggleSelect={toggleTicked}
             caption={`共 ${total} 次回测运行`}
           />
         ) : null}
+
+        <div className="toolbar" role="group" aria-label="多运行对比">
+          <span className="card__hint" data-testid="compare-selection">
+            {ticked.length === 0
+              ? `勾选 2–${MAX_COMPARISON_RUNS} 次运行以对比（当前未选）`
+              : `已选 ${ticked.length} / ${MAX_COMPARISON_RUNS} 次运行`}
+          </span>
+          <button
+            type="button"
+            className="button button--primary"
+            data-testid="compare-selected"
+            disabled={!canCompare}
+            onClick={() => {
+              onCompare([...ticked]);
+            }}
+          >
+            对比所选运行
+          </button>
+          {ticked.length > 0 ? (
+            <button
+              type="button"
+              className="button"
+              onClick={() => {
+                setTicked([]);
+              }}
+            >
+              清除选择
+            </button>
+          ) : null}
+        </div>
 
         <div className="pagination">
           <span className="pagination__summary">{summary}</span>

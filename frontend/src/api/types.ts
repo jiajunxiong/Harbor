@@ -36,6 +36,13 @@ export interface ApiInfo {
   api_version: string;
   read_only: boolean;
   auth_required: boolean;
+  /**
+   * The report formats this API can render (SP 5.22).
+   *
+   * Published by the server rather than hardcoded here, so the download buttons
+   * can never offer a format the API would reject.
+   */
+  report_formats: string[];
 }
 
 export interface HealthStatus {
@@ -305,4 +312,94 @@ export interface RunQuery extends PageQuery {
   data_cutoff_to?: string;
   sort?: string;
   order?: SortOrder;
+}
+
+/* -- Stage 2 batch 2: replay, export and comparison (SP 5.21-5.23) ----- */
+
+/**
+ * A run's replay manifest (SP 2.61).
+ *
+ * `fingerprint` is a *composite key* over the inputs, not a digest. The three
+ * unset fields are not persisted for backtest runs, so the server reports them
+ * as unset rather than as facts about the run.
+ */
+export interface ReplayManifestView {
+  run_id: string;
+  config_hash: string;
+  code_version: string;
+  start_date: string;
+  end_date: string;
+  data_cutoff: string;
+  fx_source: string | null;
+  calendar_version: string | null;
+  random_seed: number | null;
+  fingerprint: string;
+}
+
+/** One located difference between two runs' results. */
+export interface ConsistencyIssueView {
+  section: string;
+  location: string;
+  expected: string;
+  actual: string;
+}
+
+/**
+ * Whether another run with the same inputs produced the same results.
+ *
+ * `consistent` covers the result sections only, so two runs that produced
+ * nothing agree vacuously. `outcome_agrees` adds the recorded status; it is the
+ * field a reader should trust for "these two runs did the same thing".
+ */
+export interface SiblingConsistencyView {
+  run_id: string;
+  status: string;
+  same_status: boolean;
+  consistent: boolean;
+  outcome_agrees: boolean;
+  difference_count: number;
+  differences: ConsistencyIssueView[];
+}
+
+/** A run's replay manifest plus the runs claiming the same inputs (SP 5.21). */
+export interface BacktestReplayResponse {
+  run_id: string;
+  manifest: ReplayManifestView;
+  siblings: SiblingConsistencyView[];
+  /** How many runs share these inputs, so a capped list is visible as such. */
+  sibling_total: number;
+  truncated: boolean;
+  notes: string[];
+}
+
+/** One rebased point of a run's curve, in cumulative return terms. */
+export interface ComparisonPointView {
+  as_of_date: string;
+  cumulative_return: number;
+}
+
+/** One run's stance in a multi-run comparison (SP 5.23). */
+export interface RunComparisonView {
+  run_id: string;
+  status: string;
+  strategy: string;
+  strategy_version: string;
+  code_version: string;
+  data_cutoff: string;
+  currency: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  point_count: number;
+  /** Scoreable metrics exist; a curve can be present even when they do not. */
+  available: boolean;
+  unavailable_reason: string | null;
+  metrics: PerformanceMetricsView | null;
+  points: ComparisonPointView[];
+}
+
+/** Several runs side by side, with the reasons they are not like-for-like. */
+export interface BacktestComparisonResponse {
+  runs: RunComparisonView[];
+  warnings: string[];
+  notes: string[];
 }

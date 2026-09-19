@@ -33,6 +33,14 @@ from harbor.api.deps import get_read_store
 from harbor.api.errors import PROBLEM_MEDIA_TYPE
 from harbor.api.redaction import redact_document
 from harbor.api.schemas import API_VERSION
+from harbor.core.consistency_check import ConsistencyIssue
+from harbor.services.backtest import REPORT_FORMATS, REPORT_MEDIA_TYPES, RenderedReport
+from harbor.services.backtest_replay import (
+    BacktestReplayError,
+    ManifestView,
+    ReplayConsistency,
+    SiblingConsistency,
+)
 
 TOKEN = "read-token"
 OPS_TOKEN = "ops-token"
@@ -208,6 +216,37 @@ def net_value_rows() -> list[dict[str, Any]]:
     ]
 
 
+def net_value_rows_us() -> list[dict[str, Any]]:
+    """A second run's series: another currency, another period, another path.
+
+    Deliberately unlike :func:`net_value_rows` so a comparison has something to
+    compare: 1000 -> 1300 USD is +30% against the HKD run's +26%.
+    """
+    return [
+        {
+            "as_of_date": date(2026, 2, 2),
+            "currency": "USD",
+            "cash": 200.0,
+            "securities_value": 800.0,
+            "fees_paid": 1.0,
+        },
+        {
+            "as_of_date": date(2026, 2, 3),
+            "currency": "USD",
+            "cash": 200.0,
+            "securities_value": 1200.0,
+            "fees_paid": 1.0,
+        },
+        {
+            "as_of_date": date(2026, 2, 4),
+            "currency": "USD",
+            "cash": 200.0,
+            "securities_value": 1100.0,
+            "fees_paid": 1.0,
+        },
+    ]
+
+
 def fill_row(market: str = "HK", symbol: str = "0001.HK") -> dict[str, Any]:
     """One executed order row."""
     return {
@@ -248,6 +287,10 @@ class FakeReadStore:
     def __init__(self, *, backtests: list[dict[str, Any]] | None = None) -> None:
         self.backtests = backtests if backtests is not None else [backtest_row()]
         self.net_values = net_value_rows()
+        # Per-run overrides give a comparison genuinely different runs; a run id
+        # mapped to an empty list is a run with no valuations at all.
+        self.net_values_by_run: dict[str, list[dict[str, Any]]] = {}
+        self.replay_error: str | None = None
         self.fills = [fill_row(), fill_row(market="US", symbol="AAPL")]
         self.rejected = [rejected_row(), rejected_row(symbol="0003.HK", reason="no cash")]
         self.calls: list[str] = []
@@ -302,6 +345,8 @@ class FakeReadStore:
 
     def list_net_values(self, run_id: str) -> list[dict[str, Any]]:
         self._record("list_net_values")
+        if run_id in self.net_values_by_run:
+            return list(self.net_values_by_run[run_id])
         return list(self.net_values)
 
     def list_fills(
@@ -359,6 +404,57 @@ class FakeReadStore:
         statuses = sorted({str(row["status"]) for row in self.backtests})
         strategies = sorted({str(row["strategy"]) for row in self.backtests})
         return statuses, strategies
+
+    # -- derived views ---------------------------------------------------
+
+    def render_report(self, run_id: str, report_format: str) -> RenderedReport:
+        self._record("render_report")
+        return RenderedReport(
+            report_format=report_format,
+            content=f"report:{report_format}:{run_id}",
+            media_type=REPORT_MEDIA_TYPES[report_format],
+            filename=f"harbor-backtest-{run_id}.{report_format}",
+        )
+
+    def replay_consistency(self, run_id: str, *, max_siblings: int = 5) -> ReplayConsistency:
+        self._record("replay_consistency")
+        if self.replay_error is not None:
+            raise BacktestReplayError(self.replay_error)
+        return ReplayConsistency(
+            run_id=run_id,
+            manifest=ManifestView(
+                run_id=run_id,
+                config_hash="hash-1",
+                code_version="abc1234",
+                start_date=date(2020, 1, 1),
+                end_date=date(2026, 8, 27),
+                data_cutoff=date(2026, 8, 27),
+                fx_source=None,
+                calendar_version=None,
+                random_seed=None,
+                fingerprint="fp-self",
+            ),
+            siblings=(
+                SiblingConsistency(
+                    run_id="bt-run-2",
+                    status="FAILED",
+                    same_status=False,
+                    consistent=True,
+                    outcome_agrees=False,
+                    difference_count=3,
+                    differences=(
+                        ConsistencyIssue(
+                            section="net_values",
+                            location="length",
+                            expected="4",
+                            actual="3",
+                        ),
+                    ),
+                ),
+            ),
+            sibling_total=2,
+            notes=("note-one",),
+        )
 
     # -- validations -----------------------------------------------------
 
@@ -937,6 +1033,249 @@ class MetricsAndDrawdownTests(ApiContractTestCase):
         ).json()
         self.assertFalse(body["available"])
         self.assertIsNotNone(body["unavailable_reason"])
+
+
+class ReplayConsistencyTests(ApiContractTestCase):
+    """SP 5.21 — the replay manifest fingerprint and the sibling check."""
+
+    def test_the_manifest_is_published_with_its_fingerprint(self) -> None:
+        body = self.auth_call(
+            "GET", f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/replay"
+        ).json()
+
+        self.assertEqual(body["manifest"]["fingerprint"], "fp-self")
+        self.assertEqual(body["manifest"]["config_hash"], "hash-1")
+        self.assertEqual(body["manifest"]["start_date"], "2020-01-01")
+        self.assertEqual(body["manifest"]["data_cutoff"], "2026-08-27")
+
+    def test_the_notes_are_served_as_given(self) -> None:
+        body = self.auth_call(
+            "GET", f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/replay"
+        ).json()
+
+        # The router passes the service's caveats through untouched; the content
+        # of those notes is pinned by the service's own tests.
+        self.assertEqual(body["notes"], ["note-one"])
+
+    def test_a_sibling_is_compared_and_its_differences_are_located(self) -> None:
+        body = self.auth_call(
+            "GET", f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/replay"
+        ).json()
+
+        self.assertEqual(len(body["siblings"]), 1)
+        sibling = body["siblings"][0]
+        self.assertEqual(sibling["run_id"], "bt-run-2")
+        self.assertEqual(sibling["difference_count"], 3)
+        # The count is exact while the list may be capped, so both are published.
+        self.assertEqual(len(sibling["differences"]), 1)
+        self.assertEqual(sibling["differences"][0]["section"], "net_values")
+        self.assertEqual(sibling["differences"][0]["location"], "length")
+
+    def test_result_agreement_is_not_presented_as_an_outcome_agreement(self) -> None:
+        body = self.auth_call(
+            "GET", f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/replay"
+        ).json()
+
+        sibling = body["siblings"][0]
+        # The fixture is the trap this field exists for: the result sections agree
+        # (both runs produced the same rows) while the recorded status does not, so
+        # the outcome must not be presented as matching.
+        self.assertTrue(sibling["consistent"])
+        self.assertFalse(sibling["same_status"])
+        self.assertFalse(sibling["outcome_agrees"])
+
+    def test_a_bounded_sibling_list_says_how_many_were_left_out(self) -> None:
+        body = self.auth_call(
+            "GET", f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/replay"
+        ).json()
+
+        self.assertEqual(body["sibling_total"], 2)
+        self.assertTrue(body["truncated"])
+
+    def test_an_underivable_manifest_is_a_tagged_422(self) -> None:
+        self.store.replay_error = "The config snapshot is missing start_date/end_date."
+
+        response = self.auth_call("GET", f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/replay")
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["code"], "replay_manifest_unavailable")
+
+    def test_an_unknown_run_is_a_tagged_404(self) -> None:
+        response = self.auth_call("GET", f"/api/{API_VERSION}/backtests/{MISSING_RUN_ID}/replay")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["code"], "backtest_run_not_found")
+        # The manifest is never derived for a run that does not exist.
+        self.assertNotIn("replay_consistency", self.store.calls)
+
+
+class ReportExportTests(ApiContractTestCase):
+    """SP 5.22 — reports are rendered server-side and served as downloads."""
+
+    def test_each_format_is_served_with_its_media_type_and_filename(self) -> None:
+        for report_format, media_type in REPORT_MEDIA_TYPES.items():
+            with self.subTest(report_format):
+                response = self.auth_call(
+                    "GET",
+                    f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/report?format={report_format}",
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertTrue(response.headers["content-type"].startswith(media_type))
+                disposition = response.headers["content-disposition"]
+                self.assertIn("attachment", disposition)
+                self.assertIn(f"harbor-backtest-{BACKTEST_RUN_ID}.{report_format}", disposition)
+                self.assertEqual(response.text, f"report:{report_format}:{BACKTEST_RUN_ID}")
+
+    def test_the_default_format_is_json(self) -> None:
+        response = self.auth_call("GET", f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/report")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.headers["content-type"].startswith("application/json"))
+
+    def test_an_unknown_format_is_refused_before_anything_is_rendered(self) -> None:
+        response = self.auth_call(
+            "GET", f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/report?format=xml"
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["code"], "invalid_report_format")
+        self.assertNotIn("render_report", self.store.calls)
+
+    def test_the_offered_formats_are_published_by_the_capability_document(self) -> None:
+        info = self.auth_call("GET", f"/api/{API_VERSION}/version").json()
+
+        # Pinning the published list to the renderer's own tuple means a client
+        # can never offer a download the API would reject.
+        self.assertEqual(info["report_formats"], list(REPORT_FORMATS))
+        for report_format in info["report_formats"]:
+            with self.subTest(report_format):
+                response = self.auth_call(
+                    "GET",
+                    f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/report?format={report_format}",
+                )
+                self.assertEqual(response.status_code, 200)
+
+    def test_an_unknown_run_is_a_tagged_404(self) -> None:
+        response = self.auth_call(
+            "GET", f"/api/{API_VERSION}/backtests/{MISSING_RUN_ID}/report?format=json"
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["code"], "backtest_run_not_found")
+
+
+class MultiRunComparisonTests(ApiContractTestCase):
+    """SP 5.23 — several runs side by side, with the caveats stated."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.store.backtests = [
+            backtest_row(),
+            {**backtest_row(), "run_id": "bt-run-2", "code_version": "def5678"},
+        ]
+
+    def compare(
+        self, run_ids: str = f"{BACKTEST_RUN_ID},bt-run-2", **kwargs: Any
+    ) -> httpx.Response:
+        return self.auth_call(
+            "GET", f"/api/{API_VERSION}/backtests/compare?run_ids={run_ids}", **kwargs
+        )
+
+    def test_two_runs_are_returned_with_rebased_curves(self) -> None:
+        body = self.compare().json()
+
+        self.assertEqual([run["run_id"] for run in body["runs"]], [BACKTEST_RUN_ID, "bt-run-2"])
+        for run in body["runs"]:
+            with self.subTest(run["run_id"]):
+                # Rebased on each run's own first valuation, so it starts at zero.
+                self.assertAlmostEqual(run["points"][0]["cumulative_return"], 0.0)
+
+    def test_each_curve_is_rebased_on_its_own_first_value(self) -> None:
+        self.store.net_values_by_run["bt-run-2"] = net_value_rows_us()
+
+        body = self.compare().json()
+
+        hk, us = body["runs"]
+        # 10000 -> 12600 HKD and 1000 -> 1300 USD: returns are comparable even
+        # though the amounts and currencies are not.
+        self.assertAlmostEqual(hk["points"][-1]["cumulative_return"], 0.26)
+        self.assertAlmostEqual(us["points"][-1]["cumulative_return"], 0.3)
+        self.assertEqual(hk["currency"], "HKD")
+        self.assertEqual(us["currency"], "USD")
+
+    def test_the_metrics_come_from_the_same_core_function(self) -> None:
+        body = self.compare().json()
+
+        hk = body["runs"][0]
+        self.assertTrue(hk["available"])
+        self.assertAlmostEqual(hk["metrics"]["cumulative_return"], 0.26)
+        self.assertEqual(hk["metrics"]["periods"], len(net_value_rows()) - 1)
+
+    def test_a_differing_currency_is_warned_about(self) -> None:
+        self.store.net_values_by_run["bt-run-2"] = net_value_rows_us()
+
+        warnings = " ".join(self.compare().json()["warnings"])
+
+        self.assertIn("币种不同", warnings)
+
+    def test_a_differing_date_range_is_warned_about(self) -> None:
+        self.store.net_values_by_run["bt-run-2"] = net_value_rows_us()
+
+        warnings = " ".join(self.compare().json()["warnings"])
+
+        self.assertIn("时间区间不同", warnings)
+
+    def test_a_run_without_a_curve_still_appears_with_the_reason(self) -> None:
+        self.store.net_values_by_run["bt-run-2"] = []
+
+        body = self.compare().json()
+
+        failed = body["runs"][1]
+        self.assertEqual(failed["point_count"], 0)
+        self.assertFalse(failed["available"])
+        self.assertIsNotNone(failed["unavailable_reason"])
+        # Dropping it would leave a two-run choice looking like a one-run screen.
+        self.assertIn("没有可绘制的净值序列", " ".join(body["warnings"]))
+
+    def test_the_notes_refuse_a_cross_currency_amount_comparison(self) -> None:
+        notes = " ".join(self.compare().json()["notes"])
+
+        self.assertIn("1:1", notes)
+
+    def test_fewer_than_two_runs_is_refused(self) -> None:
+        response = self.compare(run_ids=BACKTEST_RUN_ID)
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["code"], "too_few_runs")
+
+    def test_a_repeated_run_is_refused(self) -> None:
+        response = self.compare(run_ids=f"{BACKTEST_RUN_ID},{BACKTEST_RUN_ID}")
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["code"], "duplicate_run_ids")
+
+    def test_too_many_runs_is_refused(self) -> None:
+        run_ids = ",".join(f"bt-{index}" for index in range(6))
+
+        response = self.compare(run_ids=run_ids)
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["code"], "too_many_runs")
+
+    def test_an_unknown_run_is_a_tagged_404(self) -> None:
+        response = self.compare(run_ids=f"{BACKTEST_RUN_ID},{MISSING_RUN_ID}")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["code"], "backtest_run_not_found")
+
+    def test_the_compare_route_is_not_shadowed_by_the_run_id_route(self) -> None:
+        # ``/backtests/compare`` must win over ``/backtests/{run_id}``; if the
+        # order ever flips, this becomes a 404 for a run called "compare".
+        response = self.compare()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("runs", response.json())
 
 
 class TradeDetailTests(ApiContractTestCase):

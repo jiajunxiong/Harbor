@@ -24,6 +24,7 @@ from harbor.api.config import ApiSettings
 from harbor.api.deps import get_optional_engine, get_settings
 from harbor.api.schemas import API_NAME, API_VERSION, ApiInfo, HealthStatus
 from harbor.api.security import require_readonly
+from harbor.services.backtest import REPORT_FORMATS
 
 router = APIRouter(tags=["meta"], dependencies=[Depends(require_readonly)])
 health_router = APIRouter(tags=["meta"])
@@ -59,11 +60,17 @@ def read_health(engine: Engine | None = Depends(get_optional_engine)) -> HealthS
 
 @router.get("/version", response_model=ApiInfo, summary="API identity and capabilities")
 def read_version(settings: ApiSettings = Depends(get_settings)) -> ApiInfo:
-    """Report the version and the read-only capability of this instance."""
+    """Report the version and the read-only capability of this instance.
+
+    The downloadable report formats are published here so the dashboard builds
+    its download links from what this API actually renders instead of from a
+    hardcoded list that could drift (SP 5.22).
+    """
     return ApiInfo(
         name=API_NAME,
         version=__version__,
         api_version=API_VERSION,
         read_only=True,
         auth_required=settings.auth_required,
+        report_formats=list(REPORT_FORMATS),
     )

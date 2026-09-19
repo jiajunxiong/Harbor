@@ -575,21 +575,35 @@ details > summary {
   font-size: var(--text-sm);
 }
 
-.code-block {
-  margin: var(--space-3) 0 0;
-  padding: var(--space-3);
-  max-height: 22rem;
-  overflow: auto;
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-sunken);
-  font-size: var(--text-xs);
-  line-height: 1.5;
+/* -- report export and sibling comparison ------------------------------ */
+
+.export-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
 }
 
-details > summary {
+.row-check {
+  width: 1rem;
+  height: 1rem;
   cursor: pointer;
-  color: var(--color-accent);
-  font-size: var(--text-sm);
+  accent-color: var(--color-accent);
+}
+
+.sibling {
+  margin-bottom: var(--space-3);
+  padding: var(--space-3);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+}
+
+.sibling__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .link-button {

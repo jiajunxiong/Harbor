@@ -25,6 +25,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
 from harbor.api.read_store import SqlReadStore
+from harbor.services.backtest import REPORT_FORMATS, BacktestReportError
 
 TEST_DATABASE_URL = os.environ.get("HARBOR_TEST_DATABASE_URL")
 
@@ -118,3 +119,77 @@ class SqlReadStoreIntegrationTests(unittest.TestCase):
 
     def test_a_missing_run_is_reported_as_absent(self) -> None:
         self.assertIsNone(self.store.get_backtest_run("no-such-run-id"))
+
+    def test_replay_consistency_derives_a_manifest_from_real_rows(self) -> None:
+        consistency = self.store.replay_consistency(self.run_id)
+
+        self.assertEqual(consistency.manifest.run_id, self.run_id)
+        # ``fingerprint()`` is the SP 2.61 *composite key* (config hash | code
+        # version | boundaries | ...), not a digest, so it is asserted as a
+        # composition rather than as a fixed-length hash.
+        fingerprint = consistency.manifest.fingerprint
+        self.assertTrue(fingerprint)
+        self.assertIn(consistency.manifest.config_hash, fingerprint)
+        self.assertIn(consistency.manifest.code_version, fingerprint)
+        # Every compared sibling must genuinely share the derived inputs; if the
+        # SQL predicate were dropped, this is what would catch it.
+        subject = self.store.get_backtest_run(self.run_id)
+        assert subject is not None
+        for sibling in consistency.siblings:
+            self.assertNotEqual(sibling.run_id, self.run_id)
+            row = self.store.get_backtest_run(sibling.run_id)
+            assert row is not None
+            self.assertEqual(row["config_hash"], subject["config_hash"])
+            self.assertEqual(row["code_version"], subject["code_version"])
+            self.assertEqual(row["data_cutoff"], subject["data_cutoff"])
+            self.assertGreaterEqual(sibling.difference_count, len(sibling.differences))
+
+    def test_the_sibling_list_respects_its_bound_and_counts_the_rest(self) -> None:
+        for limit in (0, 1):
+            with self.subTest(limit):
+                consistency = self.store.replay_consistency(self.run_id, max_siblings=limit)
+
+                self.assertLessEqual(len(consistency.siblings), limit)
+                self.assertEqual(
+                    consistency.truncated,
+                    consistency.sibling_total > len(consistency.siblings),
+                )
+
+    def test_sibling_groups_are_the_ones_the_data_contains(self) -> None:
+        # Compare the store's answer against an independent scan of the table, so
+        # the sibling predicate is verified rather than assumed.
+        rows, _total = self.store.list_backtest_runs(limit=200, offset=0)
+        subject = next(row for row in rows if str(row["run_id"]) == self.run_id)
+        expected = {
+            str(row["run_id"])
+            for row in rows
+            if str(row["run_id"]) != self.run_id
+            and row["config_hash"] == subject["config_hash"]
+            and row["code_version"] == subject["code_version"]
+            and row["data_cutoff"] == subject["data_cutoff"]
+        }
+        consistency = self.store.replay_consistency(self.run_id, max_siblings=50)
+
+        self.assertEqual(consistency.sibling_total, len(expected))
+        self.assertEqual({sibling.run_id for sibling in consistency.siblings}, expected)
+
+    def test_reports_render_in_every_published_format(self) -> None:
+        import json
+
+        for report_format in REPORT_FORMATS:
+            with self.subTest(report_format):
+                report = self.store.render_report(self.run_id, report_format)
+
+                self.assertEqual(report.report_format, report_format)
+                self.assertTrue(report.content.strip())
+                self.assertTrue(report.filename.endswith(f".{report_format}"))
+                if report_format == "json":
+                    body = json.loads(report.content)
+                    self.assertEqual(body["run"]["run_id"], self.run_id)
+                if report_format == "html":
+                    self.assertIn(self.run_id, report.content)
+                    self.assertIn("<html", report.content)
+
+    def test_an_unknown_report_format_is_refused(self) -> None:
+        with self.assertRaises(BacktestReportError):
+            self.store.render_report(self.run_id, "xml")
