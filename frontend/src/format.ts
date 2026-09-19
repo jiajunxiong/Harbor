@@ -53,3 +53,70 @@ export function formatCount(value: number): string {
 export function shortenId(value: string, keep = 10): string {
   return value.length <= keep ? value : `${value.slice(0, keep)}…`;
 }
+
+const AMOUNT_FORMAT = new Intl.NumberFormat("zh-CN", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const QUANTITY_FORMAT = new Intl.NumberFormat("zh-CN", {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 4,
+});
+
+/** Render a fraction as a percentage, or the placeholder when it is not a number. */
+export function formatPercent(value: number | null | undefined, places = 2): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return EMPTY_VALUE;
+  }
+  return `${(value * 100).toFixed(places)}%`;
+}
+
+/**
+ * Render a fraction as a signed percentage.
+ *
+ * The sign is explicit so a table column of returns cannot be misread: a value
+ * that merely lost its minus sign is the classic way a loss reads as a gain.
+ */
+export function formatSignedPercent(value: number | null | undefined, places = 2): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return EMPTY_VALUE;
+  }
+  const rendered = formatPercent(Math.abs(value), places);
+  if (value > 0) {
+    return `+${rendered}`;
+  }
+  if (value < 0) {
+    return `-${rendered}`;
+  }
+  return rendered;
+}
+
+/** Render a dimensionless ratio (Sharpe, Calmar) to a fixed number of places. */
+export function formatRatio(value: number | null | undefined, places = 2): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return EMPTY_VALUE;
+  }
+  return value.toFixed(places);
+}
+
+/** Render a money amount with thousands separators. */
+export function formatAmount(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return EMPTY_VALUE;
+  }
+  return AMOUNT_FORMAT.format(value);
+}
+
+/**
+ * Render a traded quantity.
+ *
+ * Kept apart from `formatAmount` because a quantity is not money and must not be
+ * forced to two decimals — rounding 0.5 shares to 1 would misreport a fill.
+ */
+export function formatQuantity(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return EMPTY_VALUE;
+  }
+  return QUANTITY_FORMAT.format(value);
+}

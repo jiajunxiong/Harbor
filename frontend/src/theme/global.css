@@ -411,6 +411,201 @@ a {
   background: var(--color-surface-raised);
 }
 
+/* A risk figure (drawdown, volatility) is marked, never shown as neutral. */
+.metric--risk {
+  border-color: var(--color-warn);
+}
+
+.metric--gain .metric__value {
+  color: var(--color-ok);
+}
+
+.metric--loss .metric__value {
+  color: var(--color-danger);
+}
+
+/* -- tabs -------------------------------------------------------------- */
+
+.tabs {
+  display: flex;
+  gap: var(--space-1);
+  border-bottom: var(--border-width) solid var(--color-border);
+  flex-wrap: wrap;
+}
+
+.tab {
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--color-text);
+}
+
+.tab--active {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+  font-weight: var(--weight-medium);
+}
+
+/* -- toolbar and key/value lists -------------------------------------- */
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: flex-end;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.field__label {
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+.field__control {
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+  border: var(--border-width) solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.kv dt {
+  color: var(--color-text-muted);
+}
+
+.kv dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* A proportional bar drawn behind a label, for reason distributions whose
+ * labels are too long for an axis. */
+.bar-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 12rem;
+}
+
+.bar-cell__track {
+  flex: 1;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-sunken);
+  overflow: hidden;
+}
+
+.bar-cell__fill {
+  height: 100%;
+  background: var(--color-accent);
+}
+
+.notice {
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--color-warn);
+  background: var(--color-warn-subtle);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+}
+
+.notice--info {
+  border-left-color: var(--color-info);
+  background: var(--color-info-subtle);
+}
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.chart-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.chart-toolbar .card__hint {
+  margin-left: auto;
+}
+
+.code-block {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3);
+  max-height: 22rem;
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-sunken);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+details > summary {
+  cursor: pointer;
+  color: var(--color-accent);
+  font-size: var(--text-sm);
+}
+
+.code-block {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3);
+  max-height: 22rem;
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-sunken);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+details > summary {
+  cursor: pointer;
+  color: var(--color-accent);
+  font-size: var(--text-sm);
+}
+
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-accent);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
 .metric__label {
   color: var(--color-text-muted);
   font-size: var(--text-sm);

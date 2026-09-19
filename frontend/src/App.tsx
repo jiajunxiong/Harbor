@@ -1,14 +1,33 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
 import { createQueryClient } from "./api/queryClient";
+import { DEFAULT_ROUTE, type RunListSelection, type RunTab } from "./app/route";
+import { useHashRoute } from "./app/useHashRoute";
 import { ApiStatus } from "./components/ApiStatus";
 import { ResearchDisclaimer } from "./components/ResearchDisclaimer";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { BacktestRunsPage } from "./features/backtests/BacktestRunsPage";
+import { RunDetailPage } from "./features/backtests/RunDetailPage";
 import { ThemeProvider } from "./theme/ThemeProvider";
 
 function AppShell() {
+  const [route, navigate] = useHashRoute();
+
+  const openRunList = useCallback(
+    (selection: RunListSelection) => {
+      navigate({ kind: "runs", selection });
+    },
+    [navigate],
+  );
+
+  const openRun = useCallback(
+    (runId: string) => {
+      navigate({ kind: "run", runId, tab: "overview" });
+    },
+    [navigate],
+  );
+
   return (
     <div className="app">
       <header className="app__header">
@@ -26,7 +45,24 @@ function AppShell() {
 
       <main className="app__main">
         <ResearchDisclaimer />
-        <BacktestRunsPage />
+        {route.kind === "runs" ? (
+          <BacktestRunsPage
+            selection={route.selection}
+            onSelectionChange={openRunList}
+            onOpenRun={openRun}
+          />
+        ) : (
+          <RunDetailPage
+            runId={route.runId}
+            tab={route.tab}
+            onTabChange={(tab: RunTab) => {
+              navigate({ kind: "run", runId: route.runId, tab });
+            }}
+            onBack={() => {
+              navigate(DEFAULT_ROUTE);
+            }}
+          />
+        )}
       </main>
 
       <footer className="app__footer">

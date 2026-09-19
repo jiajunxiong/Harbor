@@ -32,7 +32,7 @@ class SortOrder(StrEnum):
 
 @dataclass(frozen=True)
 class PageParams:
-    """Validated pagination parameters (SP 5.6)."""
+    """Validated pagination parameters, including sort (SP 5.6)."""
 
     limit: int
     offset: int
@@ -44,14 +44,28 @@ class PageParams:
         return self.offset, self.offset + self.limit
 
 
-def page_params(
+@dataclass(frozen=True)
+class PageBounds:
+    """The validated page size and offset, before any sort is chosen (SP 5.6)."""
+
+    limit: int
+    offset: int
+
+    def slice_bounds(self) -> tuple[int, int]:
+        """Return the ``[start, stop)`` bounds for an in-memory page slice."""
+        return self.offset, self.offset + self.limit
+
+
+def page_bounds(
     limit: int | None = Query(default=None, description="Page size; bounded by the server."),
     offset: int = Query(default=0, ge=0, description="Number of rows to skip."),
-    sort: str | None = Query(default=None, description="Field to sort by, when supported."),
-    order: SortOrder = Query(default=SortOrder.DESC, description="Sort direction."),
     settings: ApiSettings = Depends(get_settings),
-) -> PageParams:
-    """Validate pagination parameters against the server bounds (SP 5.6).
+) -> PageBounds:
+    """Validate the page size and offset against the server bounds (SP 5.6).
+
+    Split out from :func:`page_params` so a collection that does not support
+    sorting still gets the same bound enforcement without being offered
+    ``sort``/``order`` parameters it would ignore.
 
     Raises:
         ApiError: 422 when ``limit`` is not a positive integer within bounds.
@@ -75,13 +89,26 @@ def page_params(
             code="invalid_page_offset",
             detail="offset must be a non-negative integer.",
         )
+    return PageBounds(limit=resolved, offset=offset)
+
+
+def page_params(
+    bounds: PageBounds = Depends(page_bounds),
+    sort: str | None = Query(default=None, description="Field to sort by, when supported."),
+    order: SortOrder = Query(default=SortOrder.DESC, description="Sort direction."),
+) -> PageParams:
+    """Validate pagination parameters, including sort, against the server (SP 5.6).
+
+    Raises:
+        ApiError: 422 when ``sort`` is an empty string.
+    """
     if sort is not None and not sort.strip():
         raise ApiError(
             status_code=422,
             code="invalid_sort",
             detail="sort must be a non-empty field name when provided.",
         )
-    return PageParams(limit=resolved, offset=offset, sort=sort, order=order)
+    return PageParams(limit=bounds.limit, offset=bounds.offset, sort=sort, order=order)
 
 
 class Page(BaseModel, Generic[T]):

@@ -167,3 +167,171 @@ class QualitySummary(_Schema):
     open_issue_count: int = 0
     issues_by_severity: dict[str, int] = Field(default_factory=dict)
     latest_ingestion: IngestionSummary | None = None
+
+
+class BacktestRunFilters(_Schema):
+    """The filter and sort values a client may use on the run list (SP 5.13).
+
+    The statuses and strategies are the ones actually present in the table, so a
+    menu built from this cannot offer a filter that matches nothing. The sort
+    fields are the server's allow-list, so the UI never has to guess which
+    columns can be ordered.
+    """
+
+    statuses: list[str] = Field(default_factory=list)
+    strategies: list[str] = Field(default_factory=list)
+    sort_fields: list[str] = Field(default_factory=list)
+    sort_orders: list[str] = Field(default_factory=list)
+
+
+class NetValuePoint(_Schema):
+    """One daily net-value snapshot as persisted (SP 2.7)."""
+
+    as_of_date: date
+    currency: str
+    cash: float
+    securities_value: float
+    fees_paid: float
+
+
+class NetValueSeries(_Schema):
+    """A run's net-value curve, possibly subsampled for display (SP 5.15).
+
+    ``point_count`` is the full series length and ``returned_count`` what this
+    response carries, so a client can state plainly that a curve is a subsample
+    instead of presenting a smoothed line as the raw series. Metrics and
+    drawdown intervals are computed by the server on the *full* series.
+
+    A run that failed before its first valuation has no series at all, which is
+    a legitimate state rather than an error: ``point_count`` is then 0.
+    """
+
+    run_id: str
+    currency: str | None = None
+    point_count: int = 0
+    returned_count: int = 0
+    downsampled: bool = False
+    first_date: date | None = None
+    last_date: date | None = None
+    points: list[NetValuePoint] = Field(default_factory=list)
+
+
+class PerformanceMetricsView(_Schema):
+    """Return and risk metrics over a run's net values (SP 2.53, SP 5.16)."""
+
+    start_date: date
+    end_date: date
+    periods: int
+    cumulative_return: float
+    annualized_return: float
+    annualized_volatility: float
+    max_drawdown: float
+    sharpe_ratio: float
+    calmar_ratio: float
+    downside_deviation: float
+
+
+class BacktestMetricsResponse(_Schema):
+    """A run's metrics, or an explicit statement that they do not exist.
+
+    A failed run has no net values and therefore no metrics, and a degenerate
+    series (for example one with zero volatility) has no Sharpe ratio. Both are
+    reported as ``available: false`` with the reason, so the dashboard can show
+    *why* rather than an empty card or a fabricated zero.
+    """
+
+    run_id: str
+    source: Literal["persisted_net_values"] = "persisted_net_values"
+    available: bool = False
+    unavailable_reason: str | None = None
+    currency: str | None = None
+    metrics: PerformanceMetricsView | None = None
+
+
+class DrawdownEventView(_Schema):
+    """One threshold-triggered drawdown interval (SP 2.56, SP 5.17).
+
+    ``position_detail_available`` is false because position-level values and FX
+    P&L are not persisted, so the event cannot carry the trough's holdings or
+    exposure. The interval, depth and recovery date are exact.
+    """
+
+    threshold: float
+    start_date: date
+    peak_date: date
+    peak_value: float
+    trough_date: date
+    trough_value: float
+    depth: float
+    recovered_date: date | None = None
+    position_detail_available: bool = False
+
+
+class BacktestDrawdownResponse(_Schema):
+    """A run's drawdown intervals, or an explicit statement that none exist (SP 5.17)."""
+
+    run_id: str
+    available: bool = False
+    unavailable_reason: str | None = None
+    currency: str | None = None
+    thresholds: list[float] = Field(default_factory=list)
+    events: list[DrawdownEventView] = Field(default_factory=list)
+
+
+class FillRow(_Schema):
+    """One executed order (成交) as persisted (SP 2.7)."""
+
+    trade_date: date
+    market: str
+    symbol: str
+    side: str
+    quantity: float
+    price: float
+    fee: float
+    currency: str
+    order_ref: str
+
+
+class FillPage(_Schema):
+    """A page of a run's fills plus the filtered total (SP 5.18)."""
+
+    run_id: str
+    items: list[FillRow] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 0
+    offset: int = 0
+    next_offset: int | None = None
+
+
+class RejectedTradeRow(_Schema):
+    """One refused trade with its reason (SP 2.41, SP 2.7)."""
+
+    market: str
+    symbol: str
+    side: str | None = None
+    quantity: float | None = None
+    reason: str
+    order_ref: str | None = None
+
+
+class RejectionReasonCount(_Schema):
+    """How often one refusal reason occurred."""
+
+    reason: str
+    count: int
+
+
+class RejectedTradeResponse(_Schema):
+    """A page of refused trades plus the full-set reason distribution (SP 5.18).
+
+    The distribution is aggregated over every matching row, not over the page,
+    so a chart of it cannot describe only the rows that happen to be on screen.
+    """
+
+    run_id: str
+    items: list[RejectedTradeRow] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 0
+    offset: int = 0
+    next_offset: int | None = None
+    reasons: list[RejectionReasonCount] = Field(default_factory=list)

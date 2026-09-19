@@ -3,12 +3,40 @@ import { StatusBadge } from "../../components/StatusBadge";
 import { EMPTY_VALUE, formatDateOnly, formatTimestamp } from "../../format";
 import type { BacktestRunSummary } from "../../api/types";
 
-const COLUMNS: readonly Column<BacktestRunSummary>[] = [
-  {
+export interface BacktestRunsTableProps {
+  runs: readonly BacktestRunSummary[];
+  caption?: string;
+  /** Opens a run's detail view; omit to render the list read-only. */
+  onOpen?: (runId: string) => void;
+}
+
+/**
+ * The identifier, as a link into the detail view.
+ *
+ * Only the id is clickable, not the whole row, so a reader can still select and
+ * copy an identifier without navigating away from the list.
+ */
+function runIdColumn(onOpen: (runId: string) => void): Column<BacktestRunSummary> {
+  return {
     key: "run_id",
     header: "运行 ID",
-    render: (run) => <span className="mono">{run.run_id}</span>,
-  },
+    render: (run) => (
+      <button
+        type="button"
+        className="link-button mono"
+        data-testid={`open-run-${run.run_id}`}
+        onClick={() => {
+          onOpen(run.run_id);
+        }}
+      >
+        {run.run_id}
+      </button>
+    ),
+  };
+}
+
+/** Every column except the identifier, which depends on the navigation callback. */
+const COLUMNS: readonly Column<BacktestRunSummary>[] = [
   {
     key: "status",
     header: "状态",
@@ -51,16 +79,14 @@ const COLUMNS: readonly Column<BacktestRunSummary>[] = [
   },
 ];
 
-export interface BacktestRunsTableProps {
-  runs: readonly BacktestRunSummary[];
-  caption?: string;
-}
+/** The run list table (MVP 5 / SP 5.12, SP 5.13). */
+export function BacktestRunsTable({ runs, caption, onOpen }: BacktestRunsTableProps) {
+  const columns: readonly Column<BacktestRunSummary>[] =
+    onOpen === undefined ? COLUMNS : [runIdColumn(onOpen), ...COLUMNS];
 
-/** The run list table (MVP 5 / SP 5.12). */
-export function BacktestRunsTable({ runs, caption }: BacktestRunsTableProps) {
   return (
     <DataTable
-      columns={COLUMNS}
+      columns={columns}
       rows={runs}
       rowKey={(run) => run.run_id}
       caption={caption ?? `共 ${runs.length} 次回测运行`}

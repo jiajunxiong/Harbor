@@ -1,54 +1,81 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 
 import { useBacktestRuns } from "../../api/hooks";
 import type { BacktestRunSummary } from "../../api/types";
 import { EmptyState, ErrorState, LoadingState } from "../../components/States";
+import { hasActiveFilters, withSelection, type RunListSelection } from "../../app/route";
 import { BacktestRunsTable } from "./BacktestRunsTable";
 import { BacktestStatusChart } from "./BacktestStatusChart";
 import { paginationSummary } from "./paginationSummary";
+import { RunFilters } from "./RunFilters";
 import { countByStatus } from "./statusChart";
 
 /** Page sizes offered to the user; all are within the server's 200-row ceiling. */
 const PAGE_SIZES = [10, 25, 50, 100] as const;
-const DEFAULT_PAGE_SIZE = 25;
 
 /** A stable empty page so `runs` keeps its identity while data is absent. */
 const EMPTY_RUNS: readonly BacktestRunSummary[] = [];
 
-/**
- * The minimal end-to-end dashboard view (MVP 5 / SP 5.12, SP 5.13).
- *
- * One read-only endpoint (`GET /api/v1/backtests`) drives both a table and a
- * chart, with loading, empty and error states wired to the server's
- * problem+json contract (SP 5.7).
- */
-export function BacktestRunsPage() {
-  const [limit, setLimit] = useState<number>(DEFAULT_PAGE_SIZE);
-  const [offset, setOffset] = useState(0);
+export interface BacktestRunsPageProps {
+  /** Filter and paging state, owned by the URL so the view is shareable (SP 5.24). */
+  selection: RunListSelection;
+  onSelectionChange: (next: RunListSelection) => void;
+  onOpenRun: (runId: string) => void;
+}
 
-  const query = useBacktestRuns({ limit, offset });
+/**
+ * The backtest run history (MVP 5 / SP 5.12, SP 5.13).
+ *
+ * Filtering and sorting happen on the server, so `total` counts the *filtered*
+ * set. The status chart is explicitly labelled as describing one page only: a
+ * per-page distribution shown next to a filtered total is easy to mistake for a
+ * full-history one.
+ */
+export function BacktestRunsPage({
+  selection,
+  onSelectionChange,
+  onOpenRun,
+}: BacktestRunsPageProps) {
+  const { limit, offset } = selection;
+
+  const query = useBacktestRuns({
+    limit,
+    offset,
+    status: selection.status,
+    strategy: selection.strategy,
+    data_cutoff_from: selection.dataCutoffFrom,
+    data_cutoff_to: selection.dataCutoffTo,
+    sort: selection.sort,
+    order: selection.order,
+  });
+
   const runs = query.data?.items ?? EMPTY_RUNS;
   const total = query.data?.total ?? 0;
   const nextOffset = query.data?.next_offset ?? null;
   const counts = useMemo(() => countByStatus(runs), [runs]);
+  const filtered = hasActiveFilters(selection);
+
+  const changeSelection = useCallback(
+    (changes: Partial<RunListSelection>) => {
+      onSelectionChange(withSelection(selection, changes));
+    },
+    [onSelectionChange, selection],
+  );
 
   const goToPrevious = useCallback(() => {
-    setOffset((current) => Math.max(0, current - limit));
-  }, [limit]);
+    changeSelection({ offset: Math.max(0, offset - limit) });
+  }, [changeSelection, offset, limit]);
 
   const goToNext = useCallback(() => {
     if (nextOffset !== null) {
-      setOffset(nextOffset);
+      changeSelection({ offset: nextOffset });
     }
-  }, [nextOffset]);
-
-  const changeLimit = useCallback((next: number) => {
-    setLimit(next);
-    setOffset(0);
-  }, []);
+  }, [changeSelection, nextOffset]);
 
   const summary =
-    query.data === undefined ? "读取中…" : paginationSummary(total, offset, runs.length);
+    query.data === undefined
+      ? "读取中…"
+      : `${paginationSummary(total, offset, runs.length)}${filtered ? "（已应用筛选）" : ""}`;
   const busy = query.isFetching;
 
   return (
@@ -63,8 +90,12 @@ export function BacktestRunsPage() {
       <div className="card">
         <div className="card__header">
           <span className="card__title">运行列表</span>
-          <span className="card__hint">{summary}</span>
+          <span className="card__hint" data-testid="run-list-summary">
+            {summary}
+          </span>
         </div>
+
+        <RunFilters selection={selection} onChange={onSelectionChange} />
 
         {query.isPending ? <LoadingState label="正在读取回测运行列表…" /> : null}
 
@@ -79,12 +110,36 @@ export function BacktestRunsPage() {
 
         {query.isSuccess && runs.length === 0 ? (
           <EmptyState
-            title="暂无回测运行记录"
-            hint="先通过 CLI 执行一次回测并落库，再回到本页面；此处不提供任何写入入口。"
+            title={filtered ? "没有符合条件的运行" : "暂无回测运行记录"}
+            hint={
+              filtered ? (
+                <>
+                  已应用筛选，但没有任何运行命中。可放宽条件或
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={() => {
+                      onSelectionChange({ limit, offset: 0 });
+                    }}
+                  >
+                    清除筛选
+                  </button>
+                  ；这不代表历史为空。
+                </>
+              ) : (
+                "先通过 CLI 执行一次回测并落库，再回到本页面；此处不提供任何写入入口。"
+              )
+            }
           />
         ) : null}
 
-        {runs.length > 0 ? <BacktestRunsTable runs={runs} /> : null}
+        {runs.length > 0 ? (
+          <BacktestRunsTable
+            runs={runs}
+            onOpen={onOpenRun}
+            caption={`共 ${total} 次回测运行`}
+          />
+        ) : null}
 
         <div className="pagination">
           <span className="pagination__summary">{summary}</span>
@@ -96,7 +151,7 @@ export function BacktestRunsPage() {
             className="theme-toggle__select"
             value={limit}
             onChange={(event) => {
-              changeLimit(Number(event.target.value));
+              changeSelection({ limit: Number(event.target.value), offset: 0 });
             }}
           >
             {PAGE_SIZES.map((size) => (
@@ -127,7 +182,9 @@ export function BacktestRunsPage() {
       <div className="card">
         <div className="card__header">
           <span className="card__title">当前页状态分布</span>
-          <span className="card__hint">仅统计当前页 {runs.length} 条，非全量分布</span>
+          <span className="card__hint">
+            仅统计当前页 {runs.length} 条{filtered ? "（已筛选）" : ""}，非全量分布
+          </span>
         </div>
         <div className="card__body">
           {query.isPending ? <LoadingState label="正在读取回测运行列表…" /> : null}

@@ -13,15 +13,32 @@
  *   correct in a responsive layout, and is skipped where it does not exist.
  */
 
-import { BarChart } from "echarts/charts";
-import { GridComponent, LegendComponent, TooltipComponent } from "echarts/components";
+import { BarChart, LineChart } from "echarts/charts";
+import {
+  DataZoomComponent,
+  GridComponent,
+  LegendComponent,
+  MarkAreaComponent,
+  MarkLineComponent,
+  TooltipComponent,
+} from "echarts/components";
 import * as echarts from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
 import { useEffect, useMemo, useRef } from "react";
 
 import type { ChartOption } from "./chartTypes";
 
-echarts.use([BarChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
+echarts.use([
+  BarChart,
+  LineChart,
+  DataZoomComponent,
+  GridComponent,
+  LegendComponent,
+  MarkAreaComponent,
+  MarkLineComponent,
+  TooltipComponent,
+  CanvasRenderer,
+]);
 
 /** Whether this environment can actually paint to a canvas. */
 function isCanvasAvailable(): boolean {

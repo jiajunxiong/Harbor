@@ -1,32 +1,56 @@
 /**
- * React data hooks over the read-only endpoints (MVP 5 / SP 5.9).
+ * React data hooks over the read-only endpoints (MVP 5 / SP 5.9, SP 5.13-5.18).
  *
  * Query keys are centralised so a page can invalidate exactly what it changed
- * (for example after the user clicks "刷新") without guessing at key shapes.
+ * without guessing at key shapes. Filter objects are part of the key, so two
+ * different filter combinations never share a cache entry.
  */
 
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 
 import {
   fetchApiInfo,
+  fetchBacktestMetrics,
   fetchBacktestRun,
+  fetchBacktestRunFilters,
   fetchBacktestRuns,
+  fetchDrawdowns,
+  fetchFills,
   fetchHealth,
-  type PageQuery,
+  fetchNetValues,
+  fetchRejectedTrades,
+  type TradeQuery,
 } from "./endpoints";
 import type {
   ApiInfo,
+  BacktestDrawdownResponse,
+  BacktestMetricsResponse,
   BacktestRunDetail,
+  BacktestRunFilters,
   BacktestRunSummary,
+  FillPage,
   HealthStatus,
+  NetValueSeries,
   Page,
+  RejectedTradeResponse,
+  RunQuery,
 } from "./types";
 
 export const queryKeys = {
   info: ["api", "info"] as const,
   health: ["api", "health"] as const,
-  backtestRuns: (query: PageQuery) => ["backtests", "list", query.limit ?? null, query.offset ?? 0] as const,
+  runFilters: ["backtests", "filters"] as const,
+  // The whole query object is part of the key: every filter and sort value that
+  // changes the response also changes the cache entry.
+  backtestRuns: (query: RunQuery) => ["backtests", "list", query] as const,
   backtestRun: (runId: string) => ["backtests", "detail", runId] as const,
+  netValues: (runId: string, maxPoints: number | undefined) =>
+    ["backtests", "net-values", runId, maxPoints ?? null] as const,
+  metrics: (runId: string) => ["backtests", "metrics", runId] as const,
+  drawdowns: (runId: string) => ["backtests", "drawdowns", runId] as const,
+  fills: (runId: string, query: TradeQuery) => ["backtests", "fills", runId, query] as const,
+  rejectedTrades: (runId: string, query: TradeQuery) =>
+    ["backtests", "rejected-trades", runId, query] as const,
 };
 
 export function useApiInfo(): UseQueryResult<ApiInfo, Error> {
@@ -43,7 +67,7 @@ export function useHealth(): UseQueryResult<HealthStatus, Error> {
   });
 }
 
-export function useBacktestRuns(query: PageQuery = {}): UseQueryResult<Page<BacktestRunSummary>, Error> {
+export function useBacktestRuns(query: RunQuery = {}): UseQueryResult<Page<BacktestRunSummary>, Error> {
   return useQuery({
     queryKey: queryKeys.backtestRuns(query),
     queryFn: ({ signal }) => fetchBacktestRuns(query, { signal }),
@@ -56,5 +80,66 @@ export function useBacktestRun(runId: string | null): UseQueryResult<BacktestRun
     queryKey: queryKeys.backtestRun(runId ?? ""),
     queryFn: ({ signal }) => fetchBacktestRun(runId as string, { signal }),
     enabled: runId !== null && runId !== "",
+  });
+}
+
+export function useBacktestRunFilters(): UseQueryResult<BacktestRunFilters, Error> {
+  return useQuery({
+    queryKey: queryKeys.runFilters,
+    queryFn: ({ signal }) => fetchBacktestRunFilters({ signal }),
+    // The list of statuses and strategies changes only when a run is created.
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useNetValues(
+  runId: string | null,
+  maxPoints?: number,
+): UseQueryResult<NetValueSeries, Error> {
+  return useQuery({
+    queryKey: queryKeys.netValues(runId ?? "", maxPoints),
+    queryFn: ({ signal }) => fetchNetValues(runId as string, { max_points: maxPoints }, { signal }),
+    enabled: runId !== null && runId !== "",
+  });
+}
+
+export function useBacktestMetrics(
+  runId: string | null,
+): UseQueryResult<BacktestMetricsResponse, Error> {
+  return useQuery({
+    queryKey: queryKeys.metrics(runId ?? ""),
+    queryFn: ({ signal }) => fetchBacktestMetrics(runId as string, { signal }),
+    enabled: runId !== null && runId !== "",
+  });
+}
+
+export function useDrawdowns(
+  runId: string | null,
+): UseQueryResult<BacktestDrawdownResponse, Error> {
+  return useQuery({
+    queryKey: queryKeys.drawdowns(runId ?? ""),
+    queryFn: ({ signal }) => fetchDrawdowns(runId as string, { signal }),
+    enabled: runId !== null && runId !== "",
+  });
+}
+
+export function useFills(runId: string | null, query: TradeQuery = {}): UseQueryResult<FillPage, Error> {
+  return useQuery({
+    queryKey: queryKeys.fills(runId ?? "", query),
+    queryFn: ({ signal }) => fetchFills(runId as string, query, { signal }),
+    enabled: runId !== null && runId !== "",
+    placeholderData: (previous) => previous,
+  });
+}
+
+export function useRejectedTrades(
+  runId: string | null,
+  query: TradeQuery = {},
+): UseQueryResult<RejectedTradeResponse, Error> {
+  return useQuery({
+    queryKey: queryKeys.rejectedTrades(runId ?? "", query),
+    queryFn: ({ signal }) => fetchRejectedTrades(runId as string, query, { signal }),
+    enabled: runId !== null && runId !== "",
+    placeholderData: (previous) => previous,
   });
 }

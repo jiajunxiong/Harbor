@@ -9,21 +9,27 @@
 import { buildQuery, getJson } from "./client";
 import type {
   ApiInfo,
+  BacktestDrawdownResponse,
+  BacktestMetricsResponse,
   BacktestRunDetail,
+  BacktestRunFilters,
   BacktestRunSummary,
+  FillPage,
   HealthStatus,
+  NetValueSeries,
   Page,
+  PageQuery,
   PaperRunDetail,
   PaperRunSummary,
   QualitySummary,
+  RejectedTradeResponse,
+  RunQuery,
   ValidationRunDetail,
   ValidationRunSummary,
 } from "./types";
 
-export interface PageQuery {
-  limit?: number;
-  offset?: number;
-}
+/** Re-exported so callers can keep importing the paging shape from here. */
+export type { PageQuery };
 
 export function fetchApiInfo(options?: { signal?: AbortSignal }): Promise<ApiInfo> {
   return getJson<ApiInfo>("/version", options);
@@ -34,11 +40,27 @@ export function fetchHealth(options?: { signal?: AbortSignal }): Promise<HealthS
   return getJson<HealthStatus>("/health", { ...options, absolutePath: true });
 }
 
+/**
+ * List backtest runs (SP 5.13).
+ *
+ * Every filter is forwarded explicitly. An earlier version passed only the
+ * page bounds, which failed silently — the table simply showed unfiltered
+ * history — so each Stage 2 parameter is named here rather than spread.
+ */
 export function fetchBacktestRuns(
-  query: PageQuery = {},
+  query: RunQuery = {},
   options?: { signal?: AbortSignal },
 ): Promise<Page<BacktestRunSummary>> {
-  const search = buildQuery({ limit: query.limit, offset: query.offset });
+  const search = buildQuery({
+    limit: query.limit,
+    offset: query.offset,
+    status: query.status,
+    strategy: query.strategy,
+    data_cutoff_from: query.data_cutoff_from,
+    data_cutoff_to: query.data_cutoff_to,
+    sort: query.sort,
+    order: query.order,
+  });
   return getJson<Page<BacktestRunSummary>>(`/backtests${search}`, options);
 }
 
@@ -84,4 +106,80 @@ export function fetchQualitySummary(
   options?: { signal?: AbortSignal },
 ): Promise<QualitySummary> {
   return getJson<QualitySummary>(`/quality/${market}`, options);
+}
+
+/* -- Stage 2: the backtest dashboard (SP 5.13-5.18) --------------------- */
+
+export function fetchBacktestRunFilters(options?: {
+  signal?: AbortSignal;
+}): Promise<BacktestRunFilters> {
+  return getJson<BacktestRunFilters>("/backtests/filters", options);
+}
+
+export function fetchNetValues(
+  runId: string,
+  query: { max_points?: number } = {},
+  options?: { signal?: AbortSignal },
+): Promise<NetValueSeries> {
+  const search = buildQuery({ max_points: query.max_points });
+  return getJson<NetValueSeries>(
+    `/backtests/${encodeURIComponent(runId)}/net-values${search}`,
+    options,
+  );
+}
+
+export function fetchBacktestMetrics(
+  runId: string,
+  options?: { signal?: AbortSignal },
+): Promise<BacktestMetricsResponse> {
+  return getJson<BacktestMetricsResponse>(
+    `/backtests/${encodeURIComponent(runId)}/metrics`,
+    options,
+  );
+}
+
+export function fetchDrawdowns(
+  runId: string,
+  options?: { signal?: AbortSignal },
+): Promise<BacktestDrawdownResponse> {
+  return getJson<BacktestDrawdownResponse>(
+    `/backtests/${encodeURIComponent(runId)}/drawdowns`,
+    options,
+  );
+}
+
+export interface TradeQuery extends PageQuery {
+  market?: string;
+  symbol?: string;
+}
+
+export function fetchFills(
+  runId: string,
+  query: TradeQuery = {},
+  options?: { signal?: AbortSignal },
+): Promise<FillPage> {
+  const search = buildQuery({
+    market: query.market,
+    symbol: query.symbol,
+    limit: query.limit,
+    offset: query.offset,
+  });
+  return getJson<FillPage>(`/backtests/${encodeURIComponent(runId)}/fills${search}`, options);
+}
+
+export function fetchRejectedTrades(
+  runId: string,
+  query: TradeQuery = {},
+  options?: { signal?: AbortSignal },
+): Promise<RejectedTradeResponse> {
+  const search = buildQuery({
+    market: query.market,
+    symbol: query.symbol,
+    limit: query.limit,
+    offset: query.offset,
+  });
+  return getJson<RejectedTradeResponse>(
+    `/backtests/${encodeURIComponent(runId)}/rejected-trades${search}`,
+    options,
+  );
 }

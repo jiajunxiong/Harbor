@@ -151,3 +151,158 @@ export interface QualitySummary {
   issues_by_severity: Record<string, number>;
   latest_ingestion: IngestionSummary | null;
 }
+
+/* -- Stage 2: the backtest dashboard (SP 5.13-5.18) --------------------- */
+
+/** The filter and sort values the server accepts on the run list (SP 5.13). */
+export interface BacktestRunFilters {
+  statuses: string[];
+  strategies: string[];
+  sort_fields: string[];
+  sort_orders: string[];
+}
+
+/** One daily net-value snapshot. */
+export interface NetValuePoint {
+  as_of_date: string;
+  currency: string;
+  cash: number;
+  securities_value: number;
+  fees_paid: number;
+}
+
+/**
+ * A run's net-value curve (SP 5.15).
+ *
+ * `point_count` is the full series length and `returned_count` what arrived, so a
+ * chart can say plainly when it is drawing a subsample. `currency` and the date
+ * range are null only when the run has no valuations at all (a failed run).
+ */
+export interface NetValueSeries {
+  run_id: string;
+  currency: string | null;
+  point_count: number;
+  returned_count: number;
+  downsampled: boolean;
+  first_date: string | null;
+  last_date: string | null;
+  points: NetValuePoint[];
+}
+
+/** Return and risk metrics over a run's net values (SP 5.16). */
+export interface PerformanceMetricsView {
+  start_date: string;
+  end_date: string;
+  periods: number;
+  cumulative_return: number;
+  annualized_return: number;
+  annualized_volatility: number;
+  max_drawdown: number;
+  sharpe_ratio: number;
+  calmar_ratio: number;
+  downside_deviation: number;
+}
+
+/**
+ * Metrics, or an explicit statement that they do not exist.
+ *
+ * A failed run has no net values, and a degenerate series has no Sharpe ratio;
+ * both arrive as `available: false` with the reason, never as a zero.
+ */
+export interface BacktestMetricsResponse {
+  run_id: string;
+  source: "persisted_net_values";
+  available: boolean;
+  unavailable_reason: string | null;
+  currency: string | null;
+  metrics: PerformanceMetricsView | null;
+}
+
+/** One threshold-triggered drawdown interval (SP 5.17). */
+export interface DrawdownEventView {
+  threshold: number;
+  start_date: string;
+  peak_date: string;
+  peak_value: number;
+  trough_date: string;
+  trough_value: number;
+  depth: number;
+  recovered_date: string | null;
+  /** False because position values and FX P&L are not persisted. */
+  position_detail_available: boolean;
+}
+
+export interface BacktestDrawdownResponse {
+  run_id: string;
+  available: boolean;
+  unavailable_reason: string | null;
+  currency: string | null;
+  thresholds: number[];
+  events: DrawdownEventView[];
+}
+
+/** One executed order. */
+export interface FillRow {
+  trade_date: string;
+  market: string;
+  symbol: string;
+  side: string;
+  quantity: number;
+  price: number;
+  fee: number;
+  currency: string;
+  order_ref: string;
+}
+
+export interface FillPage {
+  run_id: string;
+  items: FillRow[];
+  total: number;
+  limit: number;
+  offset: number;
+  next_offset: number | null;
+}
+
+/** One refused trade with its reason. */
+export interface RejectedTradeRow {
+  market: string;
+  symbol: string;
+  side: string | null;
+  quantity: number | null;
+  reason: string;
+  order_ref: string | null;
+}
+
+export interface RejectionReasonCount {
+  reason: string;
+  count: number;
+}
+
+/** A page of refusals plus the full-set reason distribution (SP 5.18). */
+export interface RejectedTradeResponse {
+  run_id: string;
+  items: RejectedTradeRow[];
+  total: number;
+  limit: number;
+  offset: number;
+  next_offset: number | null;
+  reasons: RejectionReasonCount[];
+}
+
+/** Paging bounds shared by every collection endpoint. */
+export interface PageQuery {
+  limit?: number;
+  offset?: number;
+}
+
+export type SortOrder = "asc" | "desc";
+
+/** Run-list query parameters, mirroring the server's validation (SP 5.13). */
+export interface RunQuery extends PageQuery {
+  status?: string;
+  strategy?: string;
+  data_cutoff_from?: string;
+  data_cutoff_to?: string;
+  sort?: string;
+  order?: SortOrder;
+}

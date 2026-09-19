@@ -33,6 +33,23 @@ from harbor.storage.models import (
 
 _BACKTEST_STATUSES = frozenset(status.value for status in BacktestStatus)
 
+#: Sortable run fields (MVP 5 / SP 5.13). A client-supplied sort key is mapped
+#: through this allow-list, so no arbitrary column or expression can reach the
+#: query. Exposed so the read API can advertise the accepted values.
+_RUN_SORT_COLUMNS: dict[str, Any] = {
+    "run_id": BacktestRun.run_id,
+    "status": BacktestRun.status,
+    "strategy": BacktestRun.strategy,
+    "strategy_version": BacktestRun.strategy_version,
+    "data_cutoff": BacktestRun.data_cutoff,
+    "started_at": BacktestRun.started_at,
+    "finished_at": BacktestRun.finished_at,
+}
+
+RUN_SORT_FIELDS: tuple[str, ...] = tuple(sorted(_RUN_SORT_COLUMNS))
+
+RUN_SORT_ORDERS: tuple[str, ...] = ("asc", "desc")
+
 
 class BacktestRepository:
     """CRUD for the ``backtest_runs`` master table."""
@@ -164,23 +181,116 @@ class BacktestRepository:
         """Return a query for a single run by id (SP 2.66 audit lookup)."""
         return select(BacktestRun).where(BacktestRun.run_id == run_id)
 
-    def list_runs(self, *, limit: int | None = None, offset: int = 0) -> Select[Any]:
-        """Return a query for runs, newest first (MVP 5 / SP 5.8 read API).
+    @staticmethod
+    def _run_criteria(
+        *,
+        status: str | None = None,
+        strategy: str | None = None,
+        data_cutoff_from: date | None = None,
+        data_cutoff_to: date | None = None,
+    ) -> tuple[Any, ...]:
+        """Build the shared WHERE criteria for the run list (MVP 5 / SP 5.13).
+
+        The same criteria feed :meth:`list_runs` and :meth:`count_runs`, so the
+        reported total always describes the filtered set rather than the whole
+        table — a total that ignored the filter would silently overstate how
+        many runs a screen is showing.
+        """
+        criteria: list[Any] = []
+        if status is not None:
+            criteria.append(BacktestRun.status == status)
+        if strategy is not None:
+            criteria.append(BacktestRun.strategy == strategy)
+        if data_cutoff_from is not None:
+            criteria.append(BacktestRun.data_cutoff >= data_cutoff_from)
+        if data_cutoff_to is not None:
+            criteria.append(BacktestRun.data_cutoff <= data_cutoff_to)
+        return tuple(criteria)
+
+    def list_runs(
+        self,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        status: str | None = None,
+        strategy: str | None = None,
+        data_cutoff_from: date | None = None,
+        data_cutoff_to: date | None = None,
+        sort: str = "started_at",
+        order: str = "desc",
+    ) -> Select[Any]:
+        """Return a query for runs, newest first by default (SP 5.8, SP 5.13).
 
         ``limit`` is optional so the read API can enforce its own bound while
-        CLI callers ask for everything. Ordering is deterministic (start time,
-        then ``run_id``) so pagination cannot skip or repeat a run.
+        CLI callers ask for everything. Ordering always ends with ``run_id``
+        following the same direction, so it is a *total* order: a page boundary
+        can never skip or repeat a run when several share a sort value.
+
+        Raises:
+            ValueError: If ``sort`` is not allow-listed or ``order`` is unknown.
         """
-        statement = select(BacktestRun).order_by(
-            BacktestRun.started_at.desc(), BacktestRun.run_id.desc()
+        column = _RUN_SORT_COLUMNS.get(sort)
+        if column is None:
+            raise ValueError(
+                f"Unsupported run sort field {sort!r}; choose one of {list(RUN_SORT_FIELDS)}."
+            )
+        if order not in RUN_SORT_ORDERS:
+            raise ValueError(
+                f"Unsupported run sort order {order!r}; expected one of {list(RUN_SORT_ORDERS)}."
+            )
+        descending = order == "desc"
+        statement = (
+            select(BacktestRun)
+            .where(
+                *self._run_criteria(
+                    status=status,
+                    strategy=strategy,
+                    data_cutoff_from=data_cutoff_from,
+                    data_cutoff_to=data_cutoff_to,
+                )
+            )
+            .order_by(
+                column.desc() if descending else column.asc(),
+                BacktestRun.run_id.desc() if descending else BacktestRun.run_id.asc(),
+            )
         )
         if limit is not None:
             statement = statement.limit(limit).offset(offset)
         return statement
 
-    def count_runs(self) -> Select[Any]:
-        """Return a query for the total number of runs (MVP 5 / SP 5.8 read API)."""
-        return select(func.count()).select_from(BacktestRun)
+    def count_runs(
+        self,
+        *,
+        status: str | None = None,
+        strategy: str | None = None,
+        data_cutoff_from: date | None = None,
+        data_cutoff_to: date | None = None,
+    ) -> Select[Any]:
+        """Return a query for the number of runs matching the same filters (SP 5.13)."""
+        return (
+            select(func.count())
+            .select_from(BacktestRun)
+            .where(
+                *self._run_criteria(
+                    status=status,
+                    strategy=strategy,
+                    data_cutoff_from=data_cutoff_from,
+                    data_cutoff_to=data_cutoff_to,
+                )
+            )
+        )
+
+    def distinct_run_statuses(self) -> Select[Any]:
+        """Return a query for the run statuses actually present (SP 5.13).
+
+        A filter menu built from the *stored* values cannot offer a filter that
+        matches nothing, which a hardcoded vocabulary would.
+        """
+        return select(BacktestRun.status).distinct().order_by(BacktestRun.status.asc())
+
+    def distinct_run_strategies(self) -> Select[Any]:
+        """Return a query for the strategy names actually present (SP 5.13)."""
+        return select(BacktestRun.strategy).distinct().order_by(BacktestRun.strategy.asc())
 
     def _require_market(self, market: str, rows: Sequence[Mapping[str, Any]]) -> None:
         """Reject any result row that does not target the requested market."""
@@ -261,8 +371,22 @@ class BacktestRepository:
         return self._insert_results(BacktestRejectedTrade, run_id, rows)
 
     def list_net_values(self, run_id: str) -> Select[Any]:
-        """Return a query for a run's net-value snapshots."""
-        return select(BacktestNetValue).where(BacktestNetValue.backtest_run_id == run_id)
+        """Return a query for a run's net-value snapshots, oldest first.
+
+        The ordering is part of the contract, not a convenience: callers take
+        the first and last snapshot as the run's start and end value (SP 2.68)
+        and the metrics functions require an ascending series (SP 2.53). An
+        unordered query happened to work because the table is append-only, which
+        is not a guarantee.
+        """
+        return (
+            select(BacktestNetValue)
+            .where(BacktestNetValue.backtest_run_id == run_id)
+            .order_by(
+                BacktestNetValue.as_of_date.asc(),
+                BacktestNetValue.currency.asc(),
+            )
+        )
 
     def list_positions(self, market: str, run_id: str) -> Select[Any]:
         """Return a market- and run-scoped position snapshots query."""
@@ -295,6 +419,122 @@ class BacktestRepository:
             BacktestRejectedTrade.backtest_run_id == run_id,
             BacktestRejectedTrade.market == market,
         )
+
+    @staticmethod
+    def _run_trade_criteria(
+        model: type[Base],
+        run_id: str,
+        *,
+        market: str | None,
+        symbol: str | None,
+    ) -> tuple[Any, ...]:
+        """Build the run-scoped trade criteria shared by the list and count queries."""
+        criteria: list[Any] = [model.backtest_run_id == run_id]  # type: ignore[attr-defined]
+        if market is not None:
+            criteria.append(model.market == market)  # type: ignore[attr-defined]
+        if symbol is not None:
+            criteria.append(model.symbol == symbol)  # type: ignore[attr-defined]
+        return tuple(criteria)
+
+    def list_run_fills(
+        self,
+        run_id: str,
+        *,
+        market: str | None = None,
+        symbol: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> Select[Any]:
+        """Return a run-scoped fills query, optionally narrowed (MVP 5 / SP 5.18).
+
+        A run may span markets, so this is keyed by ``run_id`` rather than by a
+        single market: the per-market repositories cannot answer "every fill of
+        this cross-market run" without merging several queries in the client.
+        """
+        statement = (
+            select(BacktestFill)
+            .where(*self._run_trade_criteria(BacktestFill, run_id, market=market, symbol=symbol))
+            .order_by(
+                BacktestFill.trade_date.asc(),
+                BacktestFill.market.asc(),
+                BacktestFill.symbol.asc(),
+                BacktestFill.id.asc(),
+            )
+        )
+        if limit is not None:
+            statement = statement.limit(limit).offset(offset)
+        return statement
+
+    def count_run_fills(
+        self, run_id: str, *, market: str | None = None, symbol: str | None = None
+    ) -> Select[Any]:
+        """Return a query for the number of fills matching the same filters (SP 5.18)."""
+        return (
+            select(func.count())
+            .select_from(BacktestFill)
+            .where(*self._run_trade_criteria(BacktestFill, run_id, market=market, symbol=symbol))
+        )
+
+    def list_run_rejected_trades(
+        self,
+        run_id: str,
+        *,
+        market: str | None = None,
+        symbol: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> Select[Any]:
+        """Return a run-scoped rejected trades query (MVP 5 / SP 5.18)."""
+        statement = (
+            select(BacktestRejectedTrade)
+            .where(
+                *self._run_trade_criteria(
+                    BacktestRejectedTrade, run_id, market=market, symbol=symbol
+                )
+            )
+            .order_by(
+                BacktestRejectedTrade.market.asc(),
+                BacktestRejectedTrade.symbol.asc(),
+                BacktestRejectedTrade.id.asc(),
+            )
+        )
+        if limit is not None:
+            statement = statement.limit(limit).offset(offset)
+        return statement
+
+    def count_run_rejected_trades(
+        self, run_id: str, *, market: str | None = None, symbol: str | None = None
+    ) -> Select[Any]:
+        """Return a query for the number of rejected trades matching the filters (SP 5.18)."""
+        return (
+            select(func.count())
+            .select_from(BacktestRejectedTrade)
+            .where(
+                *self._run_trade_criteria(
+                    BacktestRejectedTrade, run_id, market=market, symbol=symbol
+                )
+            )
+        )
+
+    def rejected_reason_counts(
+        self, run_id: str, *, market: str | None = None, symbol: str | None = None
+    ) -> Select[Any]:
+        """Return a query for the refusal-reason distribution of a run (SP 5.18).
+
+        Aggregated in the database over **every** matching row, so the charted
+        distribution describes the whole set rather than the page on screen.
+        """
+        statement = (
+            select(BacktestRejectedTrade.reason, func.count())
+            .where(
+                *self._run_trade_criteria(
+                    BacktestRejectedTrade, run_id, market=market, symbol=symbol
+                )
+            )
+            .group_by(BacktestRejectedTrade.reason)
+            .order_by(func.count().desc(), BacktestRejectedTrade.reason.asc())
+        )
+        return statement
 
     @staticmethod
     def _factor_snapshot_rows(

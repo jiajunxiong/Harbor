@@ -77,10 +77,15 @@ def call(
 
 
 def backtest_row() -> dict[str, Any]:
-    """A backtest row shaped like the persisted columns, plus a secret-laden config."""
+    """A backtest row shaped like the persisted columns, plus a secret-laden config.
+
+    The status is the persisted vocabulary (``BacktestStatus``), not a
+    lowercased rendering: the API validates filters against those exact values,
+    so a fake that used anything else would hide a real mismatch.
+    """
     return {
         "run_id": BACKTEST_RUN_ID,
-        "status": "completed",
+        "status": "COMPLETED",
         "strategy": "momentum",
         "strategy_version": "1.0.0",
         "code_version": "abc1234",
@@ -164,6 +169,75 @@ def quality_row() -> dict[str, Any]:
     }
 
 
+def net_value_rows() -> list[dict[str, Any]]:
+    """A series with a peak, an 11% drawdown and a recovery.
+
+    Chosen so the derived endpoints have something real to work with: three
+    points is the metrics minimum, the fall crosses all of 5% / 8% / 10%, and
+    the recovery makes ``recovered_date`` non-null.
+    """
+    return [
+        {
+            "as_of_date": date(2026, 1, 2),
+            "currency": "HKD",
+            "cash": 1000.0,
+            "securities_value": 9000.0,
+            "fees_paid": 10.0,
+        },
+        {
+            "as_of_date": date(2026, 1, 5),
+            "currency": "HKD",
+            "cash": 1000.0,
+            "securities_value": 10500.0,
+            "fees_paid": 12.0,
+        },
+        {
+            "as_of_date": date(2026, 1, 6),
+            "currency": "HKD",
+            "cash": 1000.0,
+            "securities_value": 9200.0,
+            "fees_paid": 12.0,
+        },
+        {
+            "as_of_date": date(2026, 1, 7),
+            "currency": "HKD",
+            "cash": 1000.0,
+            "securities_value": 11600.0,
+            "fees_paid": 12.0,
+        },
+    ]
+
+
+def fill_row(market: str = "HK", symbol: str = "0001.HK") -> dict[str, Any]:
+    """One executed order row."""
+    return {
+        "trade_date": date(2026, 1, 2),
+        "market": market,
+        "symbol": symbol,
+        "side": "BUY",
+        "quantity": 100.0,
+        "price": 50.0,
+        "fee": 12.5,
+        "currency": "HKD" if market == "HK" else "USD",
+        "order_ref": f"ref-{market}-1",
+    }
+
+
+def rejected_row(
+    symbol: str = "0002.HK",
+    reason: str = "no quote on 2026-01-02; symbol suspended or untradeable.",
+) -> dict[str, Any]:
+    """One refused-trade row."""
+    return {
+        "market": "HK",
+        "symbol": symbol,
+        "side": "BUY",
+        "quantity": 50.0,
+        "reason": reason,
+        "order_ref": f"ref-{symbol}",
+    }
+
+
 class FakeReadStore:
     """An in-memory read store so the contract is tested without a database (SP 5.8).
 
@@ -173,6 +247,9 @@ class FakeReadStore:
 
     def __init__(self, *, backtests: list[dict[str, Any]] | None = None) -> None:
         self.backtests = backtests if backtests is not None else [backtest_row()]
+        self.net_values = net_value_rows()
+        self.fills = [fill_row(), fill_row(market="US", symbol="AAPL")]
+        self.rejected = [rejected_row(), rejected_row(symbol="0003.HK", reason="no cash")]
         self.calls: list[str] = []
         self.explode = False
 
@@ -183,9 +260,31 @@ class FakeReadStore:
 
     # -- backtests -------------------------------------------------------
 
-    def list_backtest_runs(self, *, limit: int, offset: int) -> tuple[list[dict[str, Any]], int]:
+    def list_backtest_runs(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        status: str | None = None,
+        strategy: str | None = None,
+        data_cutoff_from: Any = None,
+        data_cutoff_to: Any = None,
+        sort: str = "started_at",
+        order: str = "desc",
+    ) -> tuple[list[dict[str, Any]], int]:
         self._record("list_backtest_runs")
-        return self.backtests[offset : offset + limit], len(self.backtests)
+        rows = list(self.backtests)
+        if status is not None:
+            rows = [row for row in rows if row["status"] == status]
+        if strategy is not None:
+            rows = [row for row in rows if row["strategy"] == strategy]
+        if data_cutoff_from is not None:
+            rows = [row for row in rows if row["data_cutoff"] >= data_cutoff_from]
+        if data_cutoff_to is not None:
+            rows = [row for row in rows if row["data_cutoff"] <= data_cutoff_to]
+        rows.sort(key=lambda row: str(row.get(sort, "")), reverse=order == "desc")
+        # The total describes the *filtered* set, like the real store does.
+        return rows[offset : offset + limit], len(rows)
 
     def get_backtest_run(self, run_id: str) -> dict[str, Any] | None:
         self._record("get_backtest_run")
@@ -200,6 +299,66 @@ class FakeReadStore:
             "metrics": 4,
             "rejected_trades": 0,
         }
+
+    def list_net_values(self, run_id: str) -> list[dict[str, Any]]:
+        self._record("list_net_values")
+        return list(self.net_values)
+
+    def list_fills(
+        self,
+        run_id: str,
+        *,
+        limit: int,
+        offset: int,
+        market: str | None = None,
+        symbol: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        self._record("list_fills")
+        rows = list(self.fills)
+        if market is not None:
+            rows = [row for row in rows if row["market"] == market]
+        if symbol is not None:
+            rows = [row for row in rows if row["symbol"] == symbol]
+        return rows[offset : offset + limit], len(rows)
+
+    def list_rejected_trades(
+        self,
+        run_id: str,
+        *,
+        limit: int,
+        offset: int,
+        market: str | None = None,
+        symbol: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        self._record("list_rejected_trades")
+        rows = list(self.rejected)
+        if market is not None:
+            rows = [row for row in rows if row["market"] == market]
+        if symbol is not None:
+            rows = [row for row in rows if row["symbol"] == symbol]
+        return rows[offset : offset + limit], len(rows)
+
+    def rejected_reason_counts(
+        self,
+        run_id: str,
+        *,
+        market: str | None = None,
+        symbol: str | None = None,
+    ) -> list[tuple[str, int]]:
+        self._record("rejected_reason_counts")
+        rows, _total = self.list_rejected_trades(
+            run_id, limit=len(self.rejected) + 1, offset=0, market=market, symbol=symbol
+        )
+        counts: dict[str, int] = {}
+        for row in rows:
+            counts[str(row["reason"])] = counts.get(str(row["reason"]), 0) + 1
+        return sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+
+    def run_filter_options(self) -> tuple[list[str], list[str]]:
+        self._record("run_filter_options")
+        statuses = sorted({str(row["status"]) for row in self.backtests})
+        strategies = sorted({str(row["strategy"]) for row in self.backtests})
+        return statuses, strategies
 
     # -- validations -----------------------------------------------------
 
@@ -607,6 +766,215 @@ class RedactionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("config_snapshot", response.text)
         self.assertNotIn("postgresql://harbor:", response.text)
+
+
+class RunListFilterTests(ApiContractTestCase):
+    """SP 5.13 — the list filters and sorts, and ``total`` follows the filter."""
+
+    def test_filters_narrow_the_page_and_the_total(self) -> None:
+        self.store.backtests = [
+            backtest_row() | {"run_id": "bt-a", "status": "COMPLETED"},
+            backtest_row() | {"run_id": "bt-b", "status": "FAILED"},
+        ]
+        body = self.auth_call("GET", f"/api/{API_VERSION}/backtests?status=FAILED").json()
+        self.assertEqual(body["total"], 1)
+        self.assertEqual([item["run_id"] for item in body["items"]], ["bt-b"])
+
+    def test_an_unknown_status_is_a_tagged_422(self) -> None:
+        response = self.auth_call("GET", f"/api/{API_VERSION}/backtests?status=NOPE")
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["code"], "invalid_status")
+
+    def test_an_unknown_sort_field_is_a_tagged_422(self) -> None:
+        response = self.auth_call("GET", f"/api/{API_VERSION}/backtests?sort=total_value")
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["code"], "invalid_sort")
+
+    def test_an_inverted_date_range_is_a_tagged_422(self) -> None:
+        response = self.auth_call(
+            "GET",
+            f"/api/{API_VERSION}/backtests?data_cutoff_from=2026-02-01&data_cutoff_to=2026-01-01",
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["code"], "invalid_date_range")
+
+    def test_sorting_is_applied(self) -> None:
+        self.store.backtests = [
+            backtest_row() | {"run_id": "bt-a", "started_at": "2026-01-02T00:00:00Z"},
+            backtest_row() | {"run_id": "bt-b", "started_at": "2026-03-02T00:00:00Z"},
+        ]
+        body = self.auth_call(
+            "GET", f"/api/{API_VERSION}/backtests?sort=started_at&order=asc"
+        ).json()
+        self.assertEqual([item["run_id"] for item in body["items"]], ["bt-a", "bt-b"])
+
+    def test_filter_options_report_what_is_present(self) -> None:
+        body = self.auth_call("GET", f"/api/{API_VERSION}/backtests/filters").json()
+        self.assertIn("COMPLETED", body["statuses"])
+        self.assertIn("momentum", body["strategies"])
+        self.assertIn("started_at", body["sort_fields"])
+        self.assertEqual(body["sort_orders"], ["asc", "desc"])
+
+
+class NetValueCurveTests(ApiContractTestCase):
+    """SP 5.15 — the curve, and honesty about subsampling."""
+
+    def test_returns_the_full_series_by_default(self) -> None:
+        body = self.auth_call(
+            "GET", f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/net-values"
+        ).json()
+        self.assertEqual(body["point_count"], 4)
+        self.assertEqual(body["returned_count"], 4)
+        self.assertFalse(body["downsampled"])
+        self.assertEqual(body["currency"], "HKD")
+        self.assertEqual(body["first_date"], "2026-01-02")
+        self.assertEqual(body["points"][0]["securities_value"], 9000.0)
+
+    def test_subsampling_is_declared_and_keeps_the_ends(self) -> None:
+        body = self.auth_call(
+            "GET",
+            f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/net-values?max_points=3",
+        ).json()
+        self.assertEqual(body["point_count"], 4)
+        self.assertEqual(body["returned_count"], 3)
+        self.assertTrue(body["downsampled"])
+        self.assertEqual(body["points"][0]["as_of_date"], "2026-01-02")
+        self.assertEqual(body["points"][-1]["as_of_date"], "2026-01-07")
+
+    def test_a_run_without_valuations_has_an_empty_curve(self) -> None:
+        self.store.net_values = []
+        body = self.auth_call(
+            "GET", f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/net-values"
+        ).json()
+        self.assertEqual(body["point_count"], 0)
+        self.assertEqual(body["points"], [])
+
+    def test_an_ambiguous_series_is_refused_rather_than_charted(self) -> None:
+        rows = net_value_rows()
+        self.store.net_values = rows[:2] + [rows[2] | {"currency": "USD"}]
+        response = self.auth_call(
+            "GET", f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/net-values"
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["code"], "net_value_series_unusable")
+
+    def test_the_subsample_bound_is_validated(self) -> None:
+        response = self.auth_call(
+            "GET",
+            f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/net-values?max_points=2",
+        )
+        self.assertEqual(response.status_code, 422)
+
+
+class MetricsAndDrawdownTests(ApiContractTestCase):
+    """SP 5.16 / SP 5.17 — derived numbers, and why they can be absent."""
+
+    def test_metrics_are_computed_from_persisted_net_values(self) -> None:
+        body = self.auth_call(
+            "GET", f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/metrics"
+        ).json()
+        self.assertTrue(body["available"])
+        self.assertEqual(body["source"], "persisted_net_values")
+        self.assertEqual(body["currency"], "HKD")
+        metrics = body["metrics"]
+        self.assertAlmostEqual(metrics["cumulative_return"], 0.26, places=6)
+        self.assertAlmostEqual(metrics["max_drawdown"], (11500 - 10200) / 11500, places=6)
+        # `periods` counts returns, so four valuations give three.
+        self.assertEqual(metrics["periods"], 3)
+        self.assertIn("sharpe_ratio", metrics)
+
+    def test_a_run_without_net_values_reports_metrics_as_unavailable(self) -> None:
+        self.store.net_values = []
+        body = self.auth_call(
+            "GET", f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/metrics"
+        ).json()
+        self.assertFalse(body["available"])
+        self.assertIsNone(body["metrics"])
+        self.assertIn("no persisted net values", body["unavailable_reason"] or "")
+
+    def test_a_degenerate_series_reports_the_reason_not_a_zero(self) -> None:
+        self.store.net_values = [
+            {
+                "as_of_date": date(2026, 1, day),
+                "currency": "HKD",
+                "cash": 1000.0,
+                "securities_value": 9000.0,
+                "fees_paid": 0.0,
+            }
+            for day in (2, 5, 6)
+        ]
+        body = self.auth_call(
+            "GET", f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/metrics"
+        ).json()
+        self.assertFalse(body["available"])
+        self.assertIn("volatility", body["unavailable_reason"] or "")
+
+    def test_drawdowns_use_the_cli_thresholds(self) -> None:
+        body = self.auth_call(
+            "GET", f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/drawdowns"
+        ).json()
+        self.assertTrue(body["available"])
+        self.assertEqual(body["thresholds"], [0.05, 0.08, 0.10])
+        depths = {event["threshold"]: event["depth"] for event in body["events"]}
+        self.assertAlmostEqual(depths[0.05], (11500 - 10200) / 11500, places=6)
+        first = body["events"][0]
+        self.assertEqual(first["peak_date"], "2026-01-05")
+        self.assertEqual(first["trough_date"], "2026-01-06")
+        self.assertEqual(first["recovered_date"], "2026-01-07")
+
+    def test_drawdown_events_admit_that_position_detail_is_missing(self) -> None:
+        body = self.auth_call(
+            "GET", f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/drawdowns"
+        ).json()
+        self.assertTrue(body["events"])
+        for event in body["events"]:
+            self.assertFalse(event["position_detail_available"])
+
+    def test_a_single_day_series_reports_drawdowns_as_unavailable(self) -> None:
+        self.store.net_values = net_value_rows()[:1]
+        body = self.auth_call(
+            "GET", f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/drawdowns"
+        ).json()
+        self.assertFalse(body["available"])
+        self.assertIsNotNone(body["unavailable_reason"])
+
+
+class TradeDetailTests(ApiContractTestCase):
+    """SP 5.18 — fills and refusals, filtered, with a full-set distribution."""
+
+    def test_fills_are_paginated_and_filterable(self) -> None:
+        body = self.auth_call("GET", f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/fills").json()
+        self.assertEqual(body["total"], 2)
+        self.assertEqual(len(body["items"]), 2)
+        hk = self.auth_call(
+            "GET", f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/fills?market=HK"
+        ).json()
+        self.assertEqual(hk["total"], 1)
+        self.assertEqual(hk["items"][0]["symbol"], "0001.HK")
+
+    def test_an_unknown_market_is_refused(self) -> None:
+        response = self.auth_call(
+            "GET", f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/fills?market=JP"
+        )
+        self.assertEqual(response.status_code, 422)
+
+    def test_refusals_carry_the_full_reason_distribution(self) -> None:
+        body = self.auth_call(
+            "GET", f"/api/{API_VERSION}/backtests/{BACKTEST_RUN_ID}/rejected-trades"
+        ).json()
+        self.assertEqual(body["total"], 2)
+        reasons = {entry["reason"]: entry["count"] for entry in body["reasons"]}
+        self.assertEqual(sum(reasons.values()), 2)
+        self.assertIn("no quote on 2026-01-02; symbol suspended or untradeable.", reasons)
+
+    def test_an_unknown_run_is_a_tagged_404_on_every_view(self) -> None:
+        for suffix in ("fills", "rejected-trades", "net-values", "metrics", "drawdowns"):
+            with self.subTest(suffix=suffix):
+                response = self.auth_call(
+                    "GET", f"/api/{API_VERSION}/backtests/{MISSING_RUN_ID}/{suffix}"
+                )
+                self.assertEqual(response.status_code, 404)
+                self.assertEqual(response.json()["code"], "backtest_run_not_found")
 
 
 if __name__ == "__main__":

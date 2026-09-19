@@ -5,14 +5,24 @@
  * lets `echarts/core` tree-shake the rest of the library out of the bundle.
  */
 
-import type { BarSeriesOption } from "echarts/charts";
+import type { BarSeriesOption, LineSeriesOption } from "echarts/charts";
 import type {
+  DataZoomComponentOption,
   GridComponentOption,
   LegendComponentOption,
+  MarkAreaComponentOption,
+  MarkLineComponentOption,
   TooltipComponentOption,
 } from "echarts/components";
 import type { ComposeOption } from "echarts/core";
 
 export type ChartOption = ComposeOption<
-  BarSeriesOption | GridComponentOption | LegendComponentOption | TooltipComponentOption
+  | BarSeriesOption
+  | LineSeriesOption
+  | DataZoomComponentOption
+  | GridComponentOption
+  | LegendComponentOption
+  | MarkAreaComponentOption
+  | MarkLineComponentOption
+  | TooltipComponentOption
 >;
