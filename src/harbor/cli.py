@@ -353,6 +353,18 @@ def build_parser() -> argparse.ArgumentParser:
         default="json",
         help="Report format; defaults to json.",
     )
+    api_parser = subparsers.add_parser("api", help="Run the read-only monitoring API (MVP 5).")
+    api_subparsers = api_parser.add_subparsers(dest="api_command", required=True)
+    api_serve_parser = api_subparsers.add_parser(
+        "serve", help="Serve the read-only API over HTTP (no write endpoints)."
+    )
+    api_serve_parser.add_argument(
+        "--host", default="127.0.0.1", help="Bind address; defaults to 127.0.0.1 (local only)."
+    )
+    api_serve_parser.add_argument("--port", type=int, default=8000, help="Bind port.")
+    api_serve_parser.add_argument(
+        "--reload", action="store_true", help="Reload on source changes (development)."
+    )
     return parser
 
 
@@ -381,6 +393,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _show_validation(parser, arguments)
     if arguments.command == "paper":
         return _show_paper(parser, arguments)
+    if arguments.command == "api":
+        return _show_api(parser, arguments)
     parser.error(f"Unsupported command: {arguments.command}")
     return 2
 
@@ -1187,4 +1201,45 @@ def _show_paper_report(parser: argparse.ArgumentParser, arguments: argparse.Name
         parser.error(f"Paper report failed: {error}")
         return 2
     sys.stdout.write(output + "\n")
+    return 0
+
+
+def _show_api(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """Dispatch the API subcommands (MVP 5 / SP 5.1)."""
+    if arguments.api_command == "serve":
+        return _show_api_serve(parser, arguments)
+    parser.error(f"Unsupported api command: {arguments.api_command}")
+    return 2
+
+
+def _show_api_serve(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> int:
+    """Serve the read-only monitoring API (MVP 5 / SP 5.1).
+
+    The command has no result document because it runs until interrupted, so the
+    notice goes to stderr and stdout stays reserved for the machine-readable
+    output the other commands emit.
+    """
+    try:
+        from harbor.api.server import serve_api
+    except ImportError:
+        parser.error(
+            "The monitoring API is not installed; install the 'api' extra: "
+            'pip install -e ".[api]"'
+        )
+        return 2
+    sys.stderr.write(
+        f"Serving the read-only Harbor API on http://{arguments.host}:{arguments.port}\n"
+    )
+    sys.stderr.write(
+        "Boundary: read-only. No order placement, approvals or writes (SP 5.3); "
+        "no broker credentials are held.\n"
+    )
+    sys.stderr.flush()
+    try:
+        serve_api(host=arguments.host, port=arguments.port, reload=arguments.reload)
+    except (OSError, ValueError) as error:
+        # Includes a missing/invalid HARBOR_API_TOKEN (pydantic ValidationError)
+        # and a port already in use.
+        parser.error(f"API serve failed: {error}")
+        return 2
     return 0

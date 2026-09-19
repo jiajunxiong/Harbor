@@ -344,6 +344,22 @@ class AuthenticationTests(ApiContractTestCase):
         response = self.auth_call("GET", f"/api/{API_VERSION}/backtests")
         self.assertEqual(response.status_code, 200)
 
+    def test_every_versioned_route_requires_authentication(self) -> None:
+        """Unauthenticated requests are refused everywhere under the API prefix.
+
+        ``/health`` is the single documented exception: an orchestrator has to
+        probe it before it can hold a token. ``/version`` is not exempt — the
+        capability document is not a probe (SP 5.4).
+        """
+        for path in self.app.openapi()["paths"]:
+            if not path.startswith(f"/api/{API_VERSION}/"):
+                continue
+            with self.subTest(path=path):
+                self.assertEqual(self.anon_call("GET", path).status_code, 401)
+
+    def test_the_liveness_probe_is_the_only_unauthenticated_route(self) -> None:
+        self.assertEqual(self.anon_call("GET", "/health").status_code, 200)
+
     def test_authentication_precedes_database_access(self) -> None:
         """A refused request must never reach the data layer (SP 5.4)."""
         self.anon_call("GET", f"/api/{API_VERSION}/backtests")

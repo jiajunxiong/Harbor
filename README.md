@@ -175,10 +175,10 @@ harbor/
 │   │   │       └── yfinance_provider.py
 │   │   ├── db/                  # 数据库模型与操作
 │   │   └── broker/              # 券商API封装（模拟/实盘）
-│   ├── api/                     # FastAPI 路由
+│   ├── api/                     # FastAPI 只读监控 API（MVP 5）
 │   └── scheduler/               # 定时任务配置
 ├── backtest/                    # 回测脚本与Notebook
-├── frontend/                    # React 监控面板（MVP 4+）
+├── frontend/                    # React 只读监控看板（MVP 5）
 ├── docker-compose.yml
 ├── .env.example
 └── README.md
@@ -623,7 +623,7 @@ harbor-cli paper report "$RUN_ID" --format html
 | MVP 2：研究回测 | ✅ 已完成 | 2026年8月 |
 | MVP 3：样本外验证 | ✅ 已完成 | 2026年8月 |
 | MVP 4：模拟盘闭环 | ✅ 已完成 | 2026年8月 |
-| MVP 5：前端开发 | 📋 规划中 | — |
+| MVP 5：前端开发 | � 阶段 1 已完成（SP 5.1–5.12） | — |
 | MVP 6：实盘评估 | 📋 规划中 | — |
 
 > MVP 1（数据基础）已完成：港股与美股数据的采集、标准化、质量校验、复权因子与权益计算均已落地并通过自动化测试。MVP 1 尚未提供可用于实盘交易的策略或基础设施。
@@ -660,6 +660,27 @@ MVP 5 是**只读可视化**阶段，不改变任何研究或风控结论；开�
 - **只读边界**：API 默认不提供下单/审批/冻结等写操作端点，不持有券商凭据；看板在任何情况下都不得产生订单或修改运行状态。
 - **不改变准入**：看板只展示事实，不提高自动化程度，也不改变进入 MVP 6 的门槛。
 - **研究纪律可见**：`INCONCLUSIVE`／覆盖不足／未解决对账差异／超阈值告警必须显著呈现，不得被图表或均值掩盖。
+
+#### 运行监控看板（MVP 5 阶段 1 已交付部分）
+
+阶段 1（SP 5.1–5.12）交付了只读 API 层与前端脚手架，可本地跑通。启动方式：
+
+```bash
+# 1) 启动只读 API（另一个终端）
+set -a && source .env && set +a
+export HARBOR_API_TOKEN=dev-read-token        # 只读令牌；未设置时命令会直接报错并 exit 2
+.venv/bin/harbor-cli api serve --port 8000    # http://127.0.0.1:8000/health
+
+# 2) 启动看板（另一个终端）
+cd frontend && cp .env.example .env.local     # 填入 VITE_HARBOR_API_TOKEN
+npm install && npm run dev                    # http://localhost:5173
+```
+
+> 仅本地免认证调试时才需要显式选择 `HARBOR_API_ALLOW_UNAUTHENTICATED=1`；默认必须提供令牌（SP 5.4）。
+
+- **只读边界**：API 只注册 `GET` 路由（由 `tests/test_api_contract.py` 断言），`/health` 是唯一免认证端点，其余 `/api/v1/*` 均需 token。
+- **部分完成**：阶段 1 只接入**回测运行列表**（表格 + 当前页状态分布图）；验证 / 模拟盘 / 数据质量看板属阶段 3–5。
+- 详见 [`frontend/README.md`](frontend/README.md)。
 
 #### 进入 MVP 6（实盘评估）前所需的模拟盘条件
 

@@ -3,6 +3,11 @@
 ``/health`` is deliberately unauthenticated so a container orchestrator can
 probe it, and it reports database readiness separately from liveness so a
 degraded instance is visible instead of silently serving errors.
+
+``/version`` sits under the versioned surface and therefore requires
+authentication like every other API route (SP 5.4): the only unauthenticated
+exception is the liveness probe above, and it answers just as well without the
+capability document.
 """
 
 from __future__ import annotations
@@ -18,8 +23,9 @@ from harbor import __version__
 from harbor.api.config import ApiSettings
 from harbor.api.deps import get_optional_engine, get_settings
 from harbor.api.schemas import API_NAME, API_VERSION, ApiInfo, HealthStatus
+from harbor.api.security import require_readonly
 
-router = APIRouter(tags=["meta"])
+router = APIRouter(tags=["meta"], dependencies=[Depends(require_readonly)])
 health_router = APIRouter(tags=["meta"])
 
 

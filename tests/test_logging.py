@@ -47,5 +47,10 @@ class StructuredLoggingTests(unittest.TestCase):
         self.assertEqual(json.loads(records[0])["event"], "quality_warning")
 
     def test_unknown_log_level_is_rejected(self) -> None:
+        # The name must be one no dependency registers. `configure_logging`
+        # accepts any name the logging module knows, and importing uvicorn (a
+        # real dependency of the read API) globally calls
+        # `logging.addLevelName(..., "TRACE")` via `uvicorn.config`. Using
+        # "TRACE" here made this test pass or fail purely on test order.
         with self.assertRaisesRegex(ValueError, "Unsupported log level"):
-            configure_logging("TRACE")
+            configure_logging("NOT_A_LOG_LEVEL")

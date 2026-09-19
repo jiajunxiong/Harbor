@@ -11,6 +11,7 @@ MVP 5 阶段 1（API 层与前端治理基础，SP 5.1–5.12）已完成：
 | SP | 内容 | 位置 |
 | :--- | :--- | :--- |
 | 5.1–5.8 | 只读 API：骨架、版本化契约、只读边界、认证、脱敏、分页、错误契约、只读查询层 | `../src/harbor/api/` |
+| 5.1 | 可运行入口：`harbor-cli api serve`（`../src/harbor/api/server.py`） | 本文件下方「本地启动」 |
 | 5.9 | 前端脚手架：Vite + React + TypeScript(strict) + ECharts + TanStack Query | 本目录 |
 | 5.10 | 设计系统与主题：设计令牌、组件规范、免责声明组件、明暗主题 | `src/theme/`、`src/components/` |
 | 5.11 | API 契约测试 | `../tests/test_api_contract.py` |
@@ -21,17 +22,21 @@ MVP 5 阶段 1（API 层与前端治理基础，SP 5.1–5.12）已完成：
 ## 环境要求
 
 - Node.js ≥ 24
-- 可访问的 Harbor API（`uvicorn harbor.api.app:create_app --factory` 或等价启动方式）
+- 一个运行中的 Harbor API（用 `harbor-cli api serve` 启动，见下）
+- 已迁移且已落库的数据库（看板只读，不会写入）
 
 ## 本地启动
 
 ```bash
-# 1) 启动 API（在仓库根目录）
+# 1) 启动只读 API（在仓库根目录）
+set -a && source .env && set +a                 # 提供 DATABASE_URL
 export HARBOR_API_TOKEN=dev-read-token          # 只读令牌；不要使用 ops 令牌
-export DATABASE_URL="$(grep -m1 '^DATABASE_URL=' .env | cut -d= -f2-)"
-.venv/bin/python -m uvicorn --factory harbor.api.app:create_app --port 8000
+.venv/bin/harbor-cli api serve --port 8000
 
-# 2) 启动看板
+# 未配置 HARBOR_API_TOKEN 时命令会直接报错并 exit 2（SP 5.4 不允许静默免认证）。
+# 仅本地免认证调试需显式选择：export HARBOR_API_ALLOW_UNAUTHENTICATED=1
+
+# 2) 启动看板（另开一个终端）
 cd frontend
 cp .env.example .env.local                       # 填入 VITE_HARBOR_API_TOKEN
 npm install
