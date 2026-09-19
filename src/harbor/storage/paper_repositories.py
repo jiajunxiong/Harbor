@@ -21,7 +21,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Connection, Insert, Select, Update, select, update
+from sqlalchemy import Connection, Insert, Select, Update, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from harbor.core.paper_domain import (
@@ -241,6 +241,17 @@ class PaperRepository:
     def get_run(self, run_id: str) -> Select[Any]:
         """Return a query for a single paper run by id (audit lookup)."""
         return select(PaperRun).where(PaperRun.run_id == run_id)
+
+    def list_runs(self, *, limit: int | None = None, offset: int = 0) -> Select[Any]:
+        """Return a query for paper runs, newest first (MVP 5 / SP 5.8 read API)."""
+        statement = select(PaperRun).order_by(PaperRun.created_at.desc(), PaperRun.run_id.desc())
+        if limit is not None:
+            statement = statement.limit(limit).offset(offset)
+        return statement
+
+    def count_runs(self) -> Select[Any]:
+        """Return a query for the total number of paper runs (MVP 5 / SP 5.8)."""
+        return select(func.count()).select_from(PaperRun)
 
     @staticmethod
     def _insert_rows_statement(

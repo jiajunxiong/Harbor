@@ -29,3 +29,10 @@ docker-data/
 # Editor and operating system files
 .vscode/
 .DS_Store
+
+# Frontend (MVP 5) build output and dependencies
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+frontend/.vite/
+frontend/.env.local

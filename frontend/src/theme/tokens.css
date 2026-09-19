@@ -1,0 +1,130 @@
+/*
+ * Design tokens (MVP 5 / SP 5.10).
+ *
+ * One source of truth for colour, typography, spacing, radius and elevation,
+ * exposed as CSS custom properties so both the React components and the
+ * ECharts option builders read the same values. Themes are switched by setting
+ * `data-theme` on <html>; nothing in the app hardcodes a colour.
+ */
+
+:root {
+  /* -- spacing scale (4px base) -------------------------------------- */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+
+  /* -- typography ---------------------------------------------------- */
+  --font-sans:
+    system-ui, -apple-system, "Segoe UI", "Noto Sans SC", "PingFang SC", "Microsoft YaHei",
+    sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+
+  --leading-tight: 1.25;
+  --leading-normal: 1.55;
+
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-bold: 600;
+
+  /* -- radius and elevation ------------------------------------------ */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
+  --shadow-sm: 0 1px 2px rgb(15 23 42 / 8%);
+  --shadow-md: 0 4px 12px rgb(15 23 42 / 10%);
+
+  /* -- layout -------------------------------------------------------- */
+  --content-max-width: 1440px;
+  --border-width: 1px;
+}
+
+/* -- light theme (default) ------------------------------------------- */
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+
+  --color-bg: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-surface-raised: #ffffff;
+  --color-surface-sunken: #eef0f4;
+  --color-border: #d8dce3;
+  --color-border-strong: #b6bcc7;
+
+  --color-text: #131722;
+  --color-text-muted: #5a6473;
+  --color-text-inverse: #ffffff;
+
+  --color-accent: #1d4ed8;
+  --color-accent-hover: #1a44bd;
+  --color-accent-subtle: #e5ebfb;
+
+  /* Outcome vocabulary: research verdicts are never "good news" green only. */
+  --color-ok: #17693f;
+  --color-ok-subtle: #dcf2e5;
+  --color-warn: #8a5300;
+  --color-warn-subtle: #fbeed2;
+  --color-danger: #a12222;
+  --color-danger-subtle: #fbe0e0;
+  --color-info: #1a5578;
+  --color-info-subtle: #dceaf3;
+  --color-neutral: #4a5464;
+  --color-neutral-subtle: #e6e9ee;
+
+  --color-focus: #1d4ed8;
+}
+
+/* -- dark theme ------------------------------------------------------- */
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-bg: #0e131b;
+  --color-surface: #161d27;
+  --color-surface-raised: #1c2531;
+  --color-surface-sunken: #111823;
+  --color-border: #2c3644;
+  --color-border-strong: #414d5e;
+
+  --color-text: #e7ebf1;
+  --color-text-muted: #9aa5b5;
+  --color-text-inverse: #0e131b;
+
+  --color-accent: #7aa2f7;
+  --color-accent-hover: #9bbaf9;
+  --color-accent-subtle: #1d2a44;
+
+  --color-ok: #6ed49b;
+  --color-ok-subtle: #16301f;
+  --color-warn: #e5b567;
+  --color-warn-subtle: #33280f;
+  --color-danger: #f0847f;
+  --color-danger-subtle: #3a1d1c;
+  --color-info: #7cc0e8;
+  --color-info-subtle: #14293a;
+  --color-neutral: #a7b1c0;
+  --color-neutral-subtle: #232c38;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+  --shadow-md: 0 4px 12px rgb(0 0 0 / 45%);
+
+  --color-focus: #7aa2f7;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --shadow-md: none;
+  }
+}

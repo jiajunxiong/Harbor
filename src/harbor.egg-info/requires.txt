@@ -8,11 +8,16 @@ psycopg[binary]<4,>=3.2
 PyYAML<7,>=6
 SQLAlchemy<3,>=2.0
 
+[api]
+fastapi<1,>=0.115
+uvicorn<1,>=0.30
+
 [backtest]
 numba<0.67,>=0.66
 vectorbt<2,>=1.1.0
 
 [dev]
+httpx<1,>=0.27
 mypy<2,>=1.11
 pytest<9,>=8.0
 ruff<1,>=0.6

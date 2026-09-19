@@ -14,7 +14,7 @@ from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from typing import Any, cast
 
-from sqlalchemy import Connection, Insert, Select, Table, Update, select, update
+from sqlalchemy import Connection, Insert, Select, Table, Update, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from harbor.core.backtest_domain import BacktestStatus
@@ -163,6 +163,24 @@ class BacktestRepository:
     def get_run(self, run_id: str) -> Select[Any]:
         """Return a query for a single run by id (SP 2.66 audit lookup)."""
         return select(BacktestRun).where(BacktestRun.run_id == run_id)
+
+    def list_runs(self, *, limit: int | None = None, offset: int = 0) -> Select[Any]:
+        """Return a query for runs, newest first (MVP 5 / SP 5.8 read API).
+
+        ``limit`` is optional so the read API can enforce its own bound while
+        CLI callers ask for everything. Ordering is deterministic (start time,
+        then ``run_id``) so pagination cannot skip or repeat a run.
+        """
+        statement = select(BacktestRun).order_by(
+            BacktestRun.started_at.desc(), BacktestRun.run_id.desc()
+        )
+        if limit is not None:
+            statement = statement.limit(limit).offset(offset)
+        return statement
+
+    def count_runs(self) -> Select[Any]:
+        """Return a query for the total number of runs (MVP 5 / SP 5.8 read API)."""
+        return select(func.count()).select_from(BacktestRun)
 
     def _require_market(self, market: str, rows: Sequence[Mapping[str, Any]]) -> None:
         """Reject any result row that does not target the requested market."""
