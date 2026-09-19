@@ -67,9 +67,7 @@ def main() -> None:
         default=0.2,
         help="Seconds to wait between symbols (yfinance rate limiting).",
     )
-    parser.add_argument(
-        "--limit", type=int, default=0, help="Max symbols to fetch (0 = all)."
-    )
+    parser.add_argument("--limit", type=int, default=0, help="Max symbols to fetch (0 = all).")
     args = parser.parse_args()
 
     settings = Settings()  # type: ignore[call-arg]
@@ -88,9 +86,7 @@ def main() -> None:
     market_names = list(_MARKET_TARGETS) if args.market == "ALL" else [args.market]
     providers: dict[str, MarketDataProvider] = {}
     for name in market_names:
-        provider_name = (
-            settings.data_provider_us if name == "US" else settings.data_provider_hk
-        )
+        provider_name = settings.data_provider_us if name == "US" else settings.data_provider_hk
         providers[name] = create_provider(_MARKET_TARGETS[name], provider_name)
 
     stats = {"ok": 0, "empty": 0, "failed": 0, "rows": 0}
