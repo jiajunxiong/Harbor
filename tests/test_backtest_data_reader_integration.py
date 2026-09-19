@@ -11,6 +11,7 @@ import unittest
 from datetime import date, timedelta
 from pathlib import Path
 
+from db_guard import disposable_database_url, skip_reason
 from sqlalchemy import create_engine, text
 
 from harbor.core.backtest_config import BacktestConfig, MarketQuota
@@ -22,7 +23,8 @@ from harbor.storage.fx_repository import FxRepository
 from harbor.storage.repositories import Repository
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
-_TEST_DATABASE_URL = os.getenv("HARBOR_TEST_DATABASE_URL")
+_TEST_DATABASE_URL = disposable_database_url()
+_SKIP_REASON = skip_reason("the backtest data-reader suite")
 
 HKD = Currency.HKD
 USD = Currency.USD
@@ -202,7 +204,7 @@ def _config(market: Market, base: Currency) -> BacktestConfig:
     )
 
 
-@unittest.skipUnless(_TEST_DATABASE_URL, "HARBOR_TEST_DATABASE_URL is not set")
+@unittest.skipUnless(_TEST_DATABASE_URL, _SKIP_REASON)
 class StorageReaderIntegrationTests(unittest.TestCase):
     """SP 2.78: point-in-time, market isolation, cutoff and precheck paths."""
 
@@ -256,9 +258,13 @@ class StorageReaderIntegrationTests(unittest.TestCase):
         self.assertEqual(reader.list_securities(HK, as_of), ["0001.HK"])
         self.assertEqual(reader.list_securities(US, as_of), ["AAPL"])
         # A symbol queried under the wrong market returns nothing.
-        self.assertEqual(reader.daily_quotes(HK, "AAPL", date(2024, 1, 1), date(2024, 1, 31)), ())
+        # An empty result is an empty sequence; the reader returns lists, so the
+        # assertion checks emptiness instead of a specific container type.
         self.assertEqual(
-            reader.daily_quotes(US, "0001.HK", date(2024, 1, 1), date(2024, 1, 31)), ()
+            list(reader.daily_quotes(HK, "AAPL", date(2024, 1, 1), date(2024, 1, 31))), []
+        )
+        self.assertEqual(
+            list(reader.daily_quotes(US, "0001.HK", date(2024, 1, 1), date(2024, 1, 31))), []
         )
         # The stock pool never crosses markets.
         pool = reader.stock_pool(HK, as_of, historical_known=True)

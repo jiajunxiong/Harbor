@@ -294,7 +294,12 @@ class StorageBacktestDataReader(BacktestDataReader):
         if from_currency is to_currency:
             return FxRateRecord(from_currency, to_currency, 1.0, as_of)
         statement = self._fx.list_fx_rates(from_currency.value, to_currency.value, end=as_of)
-        statement = statement.order_by(FxRateModel.date.desc()).limit(1)
+        # ``order_by(None)`` first: SQLAlchemy *appends* to an existing ORDER BY, and
+        # the repository already orders by date ascending. Appending ``.desc()`` left
+        # that ascending key in front, so ``LIMIT 1`` returned the *earliest* rate on
+        # or before the cutoff instead of the last known one — a plausible-looking
+        # rate from the wrong date in every conversion.
+        statement = statement.order_by(None).order_by(FxRateModel.date.desc()).limit(1)
         rows = self._execute(statement)
         if not rows:
             return None

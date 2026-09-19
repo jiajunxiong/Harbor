@@ -108,9 +108,12 @@ cd frontend && npm ci && npm run dev      # 深链接：#/validations 与 #/vali
 5. **交易日历为示例性节假日清单**（SP 2.74），非交易所官方日历；该 caveat 作为覆盖缺口文本
    出现在每一次运行上，而不是只写在文档里。
 6. **质量检查清单未纳入冻结清单**：`quality_issues` 没有时间戳，无法界定清单区间。
-7. **验证运行会累积**：`validation run` / `freeze` 与只写型测试都会在开发库中追加运行行
-   （append-only，不覆盖）。开发库中出现多行 `DATA_FROZEN` 属预期；清理需手工删除，
-   看板不提供任何删除入口。
+7. **验证运行会累积**：`validation run` / `freeze` 与只写型测试都会追加运行行（append-only，不覆盖）。
+   开发库中的验收运行已于本次清理删除（6 行运行 + 6 行切分 + 4 行清单 + 21 行警告 + 9 行事件，
+   备份在 `/tmp/harbor-validation-cleanup-*.json`），并同步修掉了导致它们出现的根源：
+   写库套件现在由 `tests/db_guard.py` 拦下，不得指向 `DATABASE_URL`；正确做法是指向一次性
+   数据库 `harbor_test`（写库）与开发库（只读）两个变量分工，见 README「测试与一次性测试数据库」。
+   确需写开发库时用 `HARBOR_ALLOW_DEV_DATABASE_WRITES=1` 显式放行。
 8. **测试集尚未解锁**：实测运行为 `DATA_FROZEN`，`test_set_id` 为空，因此所有相关提示都处于
    「尚未评测」状态；`TEST_LOCKED`/`EVALUATED` 路径仍由 CLI 与 API 契约测试覆盖。
 
@@ -121,8 +124,9 @@ cd frontend && npm ci && npm run dev      # 深链接：#/validations 与 #/vali
 | `ruff format --check .` | 515 文件已格式化 |
 | `ruff check .` | 全部通过 |
 | `mypy` | 213 个源文件无问题 |
-| `pytest tests -q` | **5007 passed / 51 skipped**（跳过项需 `HARBOR_TEST_DATABASE_URL`） |
-| 只写集成测试（`HARBOR_TEST_DATABASE_URL=$DATABASE_URL`） | `test_validation_freeze.py` 7 项通过 |
+| `pytest tests -q`（干净环境 / CI 形态） | **5023 passed / 51 skipped**（需数据库的套件按原因跳过） |
+| `pytest tests -q`（开发工作流：`source .env`） | **5074 passed / 0 skipped**（写库套件跑一次性库，只读套件跑开发库） |
+| 写库套件指向开发库 | **全部跳过**并给出可行动原因（`tests/db_guard.py` 生效） |
 | Docker 冒烟（`test_docker_validation_smoke.py`） | 通过：新迁移在空库上从零建表并完成 freeze |
 | 前端 `eslint` / `tsc --noEmit` | 通过 |
 | 前端 `vitest run` | **176 passed**（14 文件） |
@@ -147,6 +151,29 @@ cd frontend && npm ci && npm run dev      # 深链接：#/validations 与 #/vali
    Sharpe 0.9 显示为 90%。改为原值呈现，不猜测单位。
 5. **冻结前失败会污染状态**：`freeze` 原本先写状态再落库清单，清单写入失败会让运行停在
    `DATA_FROZEN` 却没有任何数据。改为**先落库、后写状态**，失败时运行仍是 `DRAFT`，可重试。
+
+## 清理开发库时发现并修复的既有缺陷
+
+为了让「写库测试只在一次性库上跑」真正可行（而不是把测试数据掺进看板），把这些套件首次跑在了
+迁移到 head 的新库上。它们在此之前一直是被跳过的状态，于是暴露了 4 个从未被执行过的问题：
+
+1. **FX 取了窗口内最早的汇率（静默错误数字）**。`StorageBacktestDataReader.fx_rate_with_date`
+   在仓储已经 `ORDER BY fx_rates.date`（升序）的语句后**追加** `.desc()`；SQLAlchemy 是**追加**
+   排序键，升序键仍在前，于是 `LIMIT 1` 取到的是窗口内**最早**的汇率，而不是最后已知汇率：
+   `fx_rate(HKD, USD, 2024-01-04)` 在库里有 01-04=0.130 的情况下返回 01-02 的 0.128。
+   改正为 `order_by(None)` 后重排，并用原有的 `test_data_cutoff_for_fx_and_quotes` 作为回归测试。
+   影响面：`services/backtest.py` 与 `core/paper_data_reader.py` 的所有换算路径。本轮开发库
+   `fx_rates` 为 0 行，因此已有运行未受影响，**一旦拉取汇率就会全部算错**。
+2. **`paper_fills` 缺唯一约束，幂等写入实际不可用**。`insert_fills` 一直用
+   `ON CONFLICT (paper_run_id, fill_id) DO NOTHING` 并自述“幂等”，但迁移 0024 为
+   orders / approvals / circuit_breakers / net_values / reconciliation_differences 都建了唯一约束，
+   唯独漏了 fills → PostgreSQL 直接拒绝插入。新增迁移 `0026_paper_fills_unique` 补齐，
+   并同步模型声明。该路径目前无调用方（仅仓储包装函数），属于潜在的“上了就炸”。
+3. **`test_paper_empty_db_upgrade` 的两处测试缺陷**：断路器夹具用 `triggered=False` 却没给
+   `recovered_at`（违反领域规则，被核心层正确拒绝）；断言用 `dict(row)`（SQLAlchemy `Row`
+   不是字典，需 `.mappings()`）。
+4. **`test_backtest_data_reader_integration` 的空结果断言**用元组比较（`() != []`），
+   而读取器返回列表；改为断言“空”。
 
 ## 反误读提示（前端显著呈现，服务端下发原文）
 

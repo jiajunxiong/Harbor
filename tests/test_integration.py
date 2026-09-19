@@ -12,6 +12,7 @@ import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+from db_guard import disposable_database_url, skip_reason
 from sqlalchemy import create_engine, text
 
 from harbor.config import MarketTarget
@@ -33,7 +34,8 @@ from harbor.infrastructure.data_providers.factory import create_provider
 from harbor.storage.repositories import Repository
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
-_TEST_DATABASE_URL = os.getenv("HARBOR_TEST_DATABASE_URL")
+_TEST_DATABASE_URL = disposable_database_url()
+_SKIP_REASON = skip_reason("the data-integration suite")
 
 _QUOTE_START = date(2020, 11, 2)
 _EVENT_START = date(2021, 1, 4)
@@ -204,7 +206,7 @@ def _run_pipeline(market: MarketTarget) -> dict[str, object]:
     }
 
 
-@unittest.skipUnless(_TEST_DATABASE_URL, "HARBOR_TEST_DATABASE_URL is not set")
+@unittest.skipUnless(_TEST_DATABASE_URL, _SKIP_REASON)
 class MockHkIntegrationTests(unittest.TestCase):
     """SP 1.100: full MockProvider pipeline for Hong Kong."""
 
@@ -231,7 +233,7 @@ class MockHkIntegrationTests(unittest.TestCase):
         self.assertTrue(any(float(row["cash_amount"]) > 0 for row in equity))
 
 
-@unittest.skipUnless(_TEST_DATABASE_URL, "HARBOR_TEST_DATABASE_URL is not set")
+@unittest.skipUnless(_TEST_DATABASE_URL, _SKIP_REASON)
 class MockUsIntegrationTests(unittest.TestCase):
     """SP 1.101: full MockProvider pipeline for United States."""
 

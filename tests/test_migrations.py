@@ -13,6 +13,7 @@ import re
 import unittest
 from pathlib import Path
 
+from db_guard import disposable_database_url, skip_reason
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 
@@ -22,7 +23,8 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _ALEMBIC_DIR = _PROJECT_ROOT / "alembic"
 _VERSIONS_DIR = _ALEMBIC_DIR / "versions"
 
-_TEST_DATABASE_URL = os.getenv("HARBOR_TEST_DATABASE_URL")
+_TEST_DATABASE_URL = disposable_database_url()
+_SKIP_REASON = skip_reason("the migration suite")
 
 
 def _migration_files() -> list[Path]:
@@ -132,7 +134,7 @@ class MigrationChainTests(unittest.TestCase):
         bases = script.get_bases()
         self.assertEqual(len(heads), 1)
         self.assertEqual(len(bases), 1)
-        self.assertEqual(heads[0], "0025_create_validation_events")
+        self.assertEqual(heads[0], "0026_paper_fills_unique")
         self.assertEqual(bases[0], "0001_create_securities")
 
         versions = list(script.walk_revisions())
@@ -194,7 +196,7 @@ class MigrationSchemaTests(unittest.TestCase):
         )
 
 
-@unittest.skipUnless(_TEST_DATABASE_URL, "HARBOR_TEST_DATABASE_URL is not set")
+@unittest.skipUnless(_TEST_DATABASE_URL, _SKIP_REASON)
 class MigrationRunTests(unittest.TestCase):
     """Apply migrations to a fresh PostgreSQL and verify the resulting schema.
 
@@ -462,7 +464,7 @@ class PaperSchemaDeclarationTests(unittest.TestCase):
                 self.assertIn(name, source)
 
 
-@unittest.skipUnless(_TEST_DATABASE_URL, "HARBOR_TEST_DATABASE_URL is not set")
+@unittest.skipUnless(_TEST_DATABASE_URL, _SKIP_REASON)
 class BacktestAndFxMigrationRunTests(unittest.TestCase):
     """Upgrade a fresh DB and verify backtest + FX constraints and indexes (SP 2.77)."""
 
@@ -577,7 +579,7 @@ class BacktestAndFxMigrationRunTests(unittest.TestCase):
                 self.assertIn(expected, names)
 
 
-@unittest.skipUnless(_TEST_DATABASE_URL, "HARBOR_TEST_DATABASE_URL is not set")
+@unittest.skipUnless(_TEST_DATABASE_URL, _SKIP_REASON)
 class ValidationMigrationRunTests(unittest.TestCase):
     """Upgrade a fresh DB and verify the validation tables (SP 3.75)."""
 
@@ -692,7 +694,7 @@ class ValidationMigrationRunTests(unittest.TestCase):
                 self.assertIn(expected, names)
 
 
-@unittest.skipUnless(_TEST_DATABASE_URL, "HARBOR_TEST_DATABASE_URL is not set")
+@unittest.skipUnless(_TEST_DATABASE_URL, _SKIP_REASON)
 class PaperMigrationRunTests(unittest.TestCase):
     """Upgrade a fresh DB and verify the paper tables (SP 4.5-4.8)."""
 

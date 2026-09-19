@@ -11,6 +11,7 @@ import os
 import unittest
 from datetime import date, datetime, timezone
 
+from db_guard import disposable_database_url, skip_reason
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
@@ -28,7 +29,8 @@ from harbor.core.paper_domain import (
 )
 from harbor.storage.paper_repositories import PaperRepository
 
-_TEST_DATABASE_URL = os.environ.get("HARBOR_TEST_DATABASE_URL", "")
+_TEST_DATABASE_URL = disposable_database_url()
+_SKIP_REASON = skip_reason("the paper empty-database upgrade suite")
 _PROJECT_ROOT = os.path.join(os.path.dirname(__file__), "..")
 
 
@@ -58,7 +60,7 @@ def _upgrade_to_head(engine: Engine) -> None:
             os.environ["DATABASE_URL"] = original_url
 
 
-@unittest.skipUnless(_TEST_DATABASE_URL, "requires HARBOR_TEST_DATABASE_URL")
+@unittest.skipUnless(_TEST_DATABASE_URL, _SKIP_REASON)
 class PaperEmptyDbUpgradeTests(unittest.TestCase):
     """Empty DB -> head upgrade with paper tables and artifact round-trip (SP 4.89)."""
 
@@ -138,13 +140,16 @@ class PaperEmptyDbUpgradeTests(unittest.TestCase):
                 decided_at=now,
             )
             repository.insert_approval(run_id, approval)
+            # A non-triggered breaker is a *recovered* one and the domain insists it
+            # records when it recovered, so this fixture is a breaker that is still
+            # frozen — the state a row most directly represents.
             breaker = CircuitBreakerState(
                 breaker_id="cb-1",
                 paper_run_id=run_id,
                 kind=CircuitBreakerKind.DAILY,
-                triggered=False,
+                triggered=True,
                 scope="new_orders",
-                reason="none",
+                reason="daily loss limit breached",
                 frozen_at=now,
             )
             repository.insert_circuit_breaker(run_id, breaker)
@@ -179,35 +184,32 @@ class PaperEmptyDbUpgradeTests(unittest.TestCase):
             self.assertEqual(len(run_rows), 1)
             self.assertEqual(run_rows[0]["status"], PaperStatus.DRAFT.value)
             self.assertEqual(
-                len([dict(r) for r in connection.execute(repository.list_orders(run_id))]),
+                len(list(connection.execute(repository.list_orders(run_id)).mappings())),
                 1,
             )
             self.assertEqual(
-                len([dict(r) for r in connection.execute(repository.list_fills(run_id))]),
+                len(list(connection.execute(repository.list_fills(run_id)).mappings())),
                 1,
             )
             self.assertEqual(
-                len([dict(r) for r in connection.execute(repository.list_approvals(run_id))]),
+                len(list(connection.execute(repository.list_approvals(run_id)).mappings())),
+                1,
+            )
+            self.assertEqual(
+                len(list(connection.execute(repository.list_circuit_breakers(run_id)).mappings())),
+                1,
+            )
+            self.assertEqual(
+                len(list(connection.execute(repository.list_net_values(run_id)).mappings())),
                 1,
             )
             self.assertEqual(
                 len(
-                    [dict(r) for r in connection.execute(repository.list_circuit_breakers(run_id))]
-                ),
-                1,
-            )
-            self.assertEqual(
-                len([dict(r) for r in connection.execute(repository.list_net_values(run_id))]),
-                1,
-            )
-            self.assertEqual(
-                len(
-                    [
-                        dict(r)
-                        for r in connection.execute(
+                    list(
+                        connection.execute(
                             repository.list_reconciliation_differences(run_id)
-                        )
-                    ]
+                        ).mappings()
+                    )
                 ),
                 1,
             )

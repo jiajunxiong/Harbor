@@ -1028,12 +1028,15 @@ class PaperFill(Base):
     """An executed paper order (成交, MVP 4 / SP 4.6).
 
     One row per ``(paper_run_id, fill_id)``; ``order_id`` links the fill to
-    its order (SP 4.6 / 4.25 traceability).
+    its order (SP 4.6 / 4.25 traceability). The unique constraint is what makes
+    the repository's ``ON CONFLICT (paper_run_id, fill_id)`` idempotency real:
+    without it the insert is rejected by PostgreSQL instead of being a no-op.
     """
 
     __tablename__ = "paper_fills"
     __table_args__ = (
         CheckConstraint("side IN ('BUY', 'SELL')", name="ck_paper_fills_side"),
+        UniqueConstraint("paper_run_id", "fill_id", name="uq_paper_fills_id"),
         ForeignKeyConstraint(
             ["paper_run_id"],
             ["paper_runs.run_id"],

@@ -333,6 +333,35 @@ pip install -e ".[backtest]"
 pip install -e ".[dev]"
 ```
 
+### 测试与一次性测试数据库
+
+```bash
+# 不设任何测试库变量时，需要真实数据库的套件会被跳过，
+# 纯逻辑与前端契约测试照常运行
+pytest tests -q
+
+# 需要真实数据库的套件分两类：
+# 1) 写库套件（冻结 / 迁移 / 集成 / 模拟盘）→ 必须是一次性库
+#    宿主端口以 .env 中的 POSTGRES_PORT 为准
+docker compose exec postgres createdb -U harbor harbor_test
+HARBOR_TEST_DATABASE_URL=postgresql://harbor:harbor@localhost:5433/harbor_test pytest tests -q
+
+# 2) 只读套件（SqlReadStore 集成测试）→ 需要*有数据*的库，默认读 DATABASE_URL
+#    可用 HARBOR_READ_DATABASE_URL 显式指定
+pytest tests/test_api_read_store_integration.py -q
+```
+
+写库与只读的需求相反（一个要空、一个要有数据），所以是两个变量。若把写库套件指向开发库，
+`tests/db_guard.py` 会直接拦下：测试产生的验证运行会出现在看板里，看起来像人工创建的研究记录。
+确有需要时用 `HARBOR_ALLOW_DEV_DATABASE_WRITES=1` 显式放行。
+
+一次性库用脏了可以重建：
+
+```bash
+docker compose exec postgres dropdb -U harbor harbor_test
+docker compose exec postgres createdb -U harbor harbor_test
+```
+
 ### 数据库迁移
 
 回测运行主表、结果表与汇率表由 Alembic 迁移创建（SP 2.6 / 2.7 / 2.12）。
@@ -713,6 +742,7 @@ MVP 4 只提供本地模拟盘执行与对账记录，模拟盘路径不创建�
 | `alembic upgrade head` 报 `value too long for character varying(32)` | 迁移版本号超过 32 字符 | 保持迁移 `revision` 长度 ≤ 32；当前迁移链已满足 |
 | 采集报 `raw_payloads` 外键错误 | 未先创建 `ingestion_runs` 记录 | 使用 `harbor-cli fetch`（内部会先创建 run），避免直接调用 ingestor |
 | 写入后查询为空 | 连接未提交 | 确保使用事务（`engine.begin()`）或执行完整 CLI 命令后再查询 |
+| 写库测试全部被跳过，提示 `HARBOR_TEST_DATABASE_URL = … is the development database` | 写库套件被 `tests/db_guard.py` 拦下（避免测试数据出现在看板里） | 指向一次性数据库：`docker compose exec postgres createdb -U harbor harbor_test`，再设 `HARBOR_TEST_DATABASE_URL`；确有需要时用 `HARBOR_ALLOW_DEV_DATABASE_WRITES=1` 显式放行 |
 | `quality report` 无输出 | 该市场尚无 `quality_issues` 记录 | 先运行一次采集/质量检查，再查看报告 |
 | 质量报告显示大量缺口 | 数据源覆盖不全或长假 | 结合“已知限制”中的交易日历简化说明判断，必要时扩大数据范围 |
 | 找不到 `harbor-cli` | 未安装项目或未激活虚拟环境 | 执行 `pip install -e .` 后使用 `.venv/bin/harbor-cli` |

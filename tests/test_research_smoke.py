@@ -18,6 +18,7 @@ from collections.abc import Sequence
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+from db_guard import disposable_database_url, skip_reason
 from sqlalchemy import create_engine, text
 
 from harbor.config import MarketTarget
@@ -62,7 +63,8 @@ _SMOKE_END = date(2025, 12, 31)
 _FIXED_HKD_TO_USD = 0.128
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
-_TEST_DATABASE_URL = os.getenv("HARBOR_TEST_DATABASE_URL")
+_TEST_DATABASE_URL = disposable_database_url()
+_SKIP_REASON = skip_reason("the research smoke suite")
 
 #: Weekday-only calendar that exactly matches MockProvider quote generation.
 _WEEKDAY_CALENDAR = MarketTradingCalendar({Market.HK: frozenset(), Market.US: frozenset()})
@@ -331,7 +333,7 @@ def _reset_database(engine: object) -> None:
         connection.execute(text(f"TRUNCATE {', '.join(_TRUNCATE_TABLES)} RESTART IDENTITY CASCADE"))
 
 
-@unittest.skipUnless(_TEST_DATABASE_URL, "HARBOR_TEST_DATABASE_URL is not set")
+@unittest.skipUnless(_TEST_DATABASE_URL, _SKIP_REASON)
 class StorageBackedResearchSmokeTests(unittest.TestCase):
     """SP 2.14: load MockProvider data into PostgreSQL, read back, precheck."""
 

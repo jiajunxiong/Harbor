@@ -20,9 +20,11 @@ Covered contract points:
 from __future__ import annotations
 
 import asyncio
+import os
 import unittest
 from datetime import date, datetime, timezone
 from typing import Any
+from unittest.mock import patch
 
 import httpx
 from fastapi import FastAPI
@@ -854,8 +856,15 @@ class AuthenticationTests(ApiContractTestCase):
         self.assertEqual(response.status_code, 200)
 
     def test_settings_refuse_to_default_to_unauthenticated(self) -> None:
-        with self.assertRaises(ValueError):
-            ApiSettings(_env_file=None)
+        # The variables are *removed* rather than blanked — an empty token is still
+        # a token — because the test is about the absence of configuration while a
+        # developer shell may well have one exported. `patch.dict` restores the
+        # environment afterwards.
+        with patch.dict("os.environ"):
+            for name in ("HARBOR_API_TOKEN", "HARBOR_API_OPS_TOKEN"):
+                os.environ.pop(name, None)
+            with self.assertRaises(ValueError):
+                ApiSettings(_env_file=None)
 
     def test_settings_reject_a_default_above_the_maximum(self) -> None:
         with self.assertRaises(ValueError):

@@ -12,8 +12,14 @@ PostgreSQL so a wrong SQLAlchemy result API (``.all()`` vs ``.mappings()``,
 missing ordering, a filter that never reaches the WHERE clause) fails here
 instead of in front of a user.
 
-The tests are **read-only** on purpose. They never truncate, seed or migrate, so
-pointing ``HARBOR_TEST_DATABASE_URL`` at a working database is safe.
+The tests are **read-only** on purpose. They never truncate, seed or migrate.
+
+They therefore need a *populated* database, which is the opposite of what the
+write-gated suites need (a disposable one), so they read their own variable:
+``HARBOR_READ_DATABASE_URL`` when set, otherwise ``DATABASE_URL`` — the database
+the application and the dashboard read. Pointing them at the development database
+is intended: verifying the SQL the dashboard depends on is exactly what they are
+for, and reading cannot pollute it.
 """
 
 from __future__ import annotations
@@ -27,9 +33,12 @@ from sqlalchemy.engine import Engine
 from harbor.api.read_store import SqlReadStore
 from harbor.services.backtest import REPORT_FORMATS, BacktestReportError
 
-TEST_DATABASE_URL = os.environ.get("HARBOR_TEST_DATABASE_URL")
+TEST_DATABASE_URL = os.environ.get("HARBOR_READ_DATABASE_URL") or os.environ.get("DATABASE_URL")
 
-_SKIP_REASON = "Set HARBOR_TEST_DATABASE_URL to run the SQL read-store integration tests."
+_SKIP_REASON = (
+    "Set HARBOR_READ_DATABASE_URL (or DATABASE_URL) to a populated database to run "
+    "the SQL read-store integration tests."
+)
 
 
 def _engine() -> Engine:

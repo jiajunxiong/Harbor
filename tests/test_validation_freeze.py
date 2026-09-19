@@ -4,7 +4,9 @@
 the delivery was verified against real data — the two bugs found in this work
 (an empty placeholder fingerprint rejected by the manifest model, and a
 "no offenders" gap message that flagged a fully covered item) were both only
-visible by running it. Point ``HARBOR_TEST_DATABASE_URL`` at a test database.
+visible by running it. It therefore runs only against a disposable database: see
+:mod:`db_guard`, which refuses the development database so a run of this suite
+can never appear as a phantom run in the dashboard again.
 
 The writes are append-only and additive: no truncation, no migration, and a run
 that already exists is never rewritten. The assertions are therefore about
@@ -15,10 +17,10 @@ must correspond to a gate item that did not pass.
 
 from __future__ import annotations
 
-import os
 import unittest
 from pathlib import Path
 
+from db_guard import disposable_database_url, skip_reason
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
@@ -32,9 +34,9 @@ from harbor.services.validation import (
 from harbor.services.validation_dataset import build_profile
 from harbor.storage.validation_repositories import ValidationRepository
 
-TEST_DATABASE_URL = os.environ.get("HARBOR_TEST_DATABASE_URL")
+TEST_DATABASE_URL = disposable_database_url()
 
-_SKIP_REASON = "Set HARBOR_TEST_DATABASE_URL to run the validation profiling tests."
+_SKIP_REASON = skip_reason("the validation freeze suite")
 
 _CONFIG = (
     Path(__file__).resolve().parents[1]

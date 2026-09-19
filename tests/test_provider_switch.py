@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime, timezone
 from unittest.mock import patch
 
+from db_guard import disposable_database_url, skip_reason
 from sqlalchemy import Engine, create_engine, text
 
 from harbor.config import MarketTarget, Settings
@@ -25,7 +26,8 @@ from harbor.infrastructure.data_providers.yfinance import (
 )
 from harbor.storage.repositories import Repository
 
-_TEST_DATABASE_URL = os.getenv("HARBOR_TEST_DATABASE_URL")
+_TEST_DATABASE_URL = disposable_database_url()
+_SKIP_REASON = skip_reason("the provider-switch suite")
 
 _DB_BASE = {
     "DATABASE_URL": "postgresql+psycopg://harbor:harbor@localhost:5432/harbor",
@@ -89,7 +91,7 @@ class ConfigSwitchingTests(unittest.TestCase):
         )
 
 
-@unittest.skipUnless(_TEST_DATABASE_URL, "HARBOR_TEST_DATABASE_URL is not set")
+@unittest.skipUnless(_TEST_DATABASE_URL, _SKIP_REASON)
 class ProviderSwitchReRunTests(unittest.TestCase):
     """Verify the fetch pipeline re-runs after a data source config switch."""
 
