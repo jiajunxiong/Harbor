@@ -1,6 +1,6 @@
 """Difference verification admission registry (MVP 4 / SP 4.77).
 
-Gates entry to the MVP 5 review on the pre-registered difference-verification
+Gates entry to the MVP 6 review on the pre-registered difference-verification
 requirements: at least 12 months of running, at least 4 complete rebalances
 and 30 fills in every enabled market, sufficient coverage and no unresolved
 reconciliation differences (差异验证准入登记, SP 4.77). Any waiver of a
@@ -144,7 +144,7 @@ def assess_verification_admission(
     requirement: AdmissionRequirement | None = None,
     waivers: tuple[AdmissionWaiver, ...] = (),
 ) -> VerificationAdmission:
-    """Assess whether the paper run may enter the MVP 5 review (SP 4.77).
+    """Assess whether the paper run may enter the MVP 6 review (SP 4.77).
 
     Every requirement (run months, per-market rebalances / fills / coverage,
     unresolved differences) must pass or carry an independent waiver; an

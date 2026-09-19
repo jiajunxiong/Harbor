@@ -2,7 +2,7 @@
 
 Confirms the paper loop never crosses into execution before release: the paper
 path produces no broker orders / credentials, its reports carry no return or
-drawdown promise, and it cannot be upgraded to MVP 5 without a passed
+drawdown promise, and it cannot be upgraded to MVP 6 without a passed
 difference verification (SP 4.83 / 4.95). Uses the SP 4.83 research boundary
 review over an in-memory paper run and its report output.
 """
@@ -190,7 +190,7 @@ class PaperReleaseBoundaryTests(unittest.TestCase):
         self.assertNotIn("credentials", json.dumps(payload).lower())
 
     def test_boundary_required_for_upgrade(self) -> None:
-        # without a passed admission the run cannot be upgraded to MVP 5
+        # without a passed admission the run cannot be upgraded to MVP 6
         review = review_research_boundary(
             paper_run_id=self.run_id,
             reviewed_at=_AS_OF,

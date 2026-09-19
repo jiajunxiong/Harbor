@@ -3,7 +3,7 @@
 The pre-release research boundary review confirms the paper loop never crosses
 into execution: it produces no broker orders and holds no broker credentials,
 its reports carry no return or drawdown promise, and it cannot be upgraded to
-MVP 5 until the difference verification admission has passed (发布前研究边界复核,
+MVP 6 until the difference verification admission has passed (发布前研究边界复核,
 SP 4.83). Failing any of the three blocks the review.
 
 The no-return-promise statement is reused from SP 3.64 so the boundary review
