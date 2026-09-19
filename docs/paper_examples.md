@@ -42,20 +42,24 @@
 ## CLI（SP 4.84–4.87）
 
 > **前置**：先激活虚拟环境 `source .venv/bin/activate`，否则会报 `harbor-cli: command not found`。
-> `<run-id>`、`<order-id>`、`<approver>`、`<date>`、`SYM:W`/`SYM:P` 均为**占位符**，请替换为真实值。
 > `--dataset-fingerprint` 是运行的可重放标识（SP 4.9），最长 64 字符、无格式校验；优先用 MVP 3 冻结
 > 数据集清单指纹（SP 3.7），冒烟/演示可用稳定短标识（如 `hk-paper-demo-2026`）。
+> **`init` 返回的 `run_id` 请存进 shell 变量**（下方 `RUN_ID=...`），不要手工复制；`paper list`
+> 子命令尚未提供，run_id 丢失时查库：`SELECT run_id, status, created_at FROM paper_runs;`
 
 ```bash
-harbor-cli paper init --config examples/configs/paper/hk_paper.yaml --dataset-fingerprint hk-paper-demo-2026
-harbor-cli paper start <run-id> --approver <approver>
-harbor-cli paper signal <run-id> --rebalance-date <date> --target SYM:W --price SYM:P
-harbor-cli paper order list|show <run-id> [<order-id>]
-harbor-cli paper approve|reject <run-id> --order-id <order-id> --approver <approver>
-harbor-cli paper reconcile <run-id> --as-of <date>
-harbor-cli paper report <run-id> --format json|csv|html
-harbor-cli paper status <run-id>
-harbor-cli paper stop <run-id>
+# 初始化并把 run_id 存进变量（避免手工复制出错）
+RUN_ID=$(harbor-cli paper init --config examples/configs/paper/hk_paper.yaml \
+  --dataset-fingerprint hk-paper-demo-2026 \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])')
+harbor-cli paper start "$RUN_ID" --approver jjxiong
+harbor-cli paper signal "$RUN_ID" --rebalance-date 2026-01-02 --target 0001.HK:0.5 --price 0001.HK:50.0
+harbor-cli paper order list "$RUN_ID"
+harbor-cli paper approve "$RUN_ID" --order-id <order-id> --approver jjxiong
+harbor-cli paper reconcile "$RUN_ID" --as-of 2026-01-02
+harbor-cli paper report "$RUN_ID" --format json|csv|html
+harbor-cli paper status "$RUN_ID"
+harbor-cli paper stop "$RUN_ID"
 ```
 
 ## 发布前研究边界（SP 4.83 / 4.95）

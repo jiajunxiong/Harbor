@@ -528,51 +528,58 @@ examples/configs/paper/
 > 优先填 MVP 3 冻结数据集清单的指纹（SP 3.7，64 位十六进制），可从验证运行查到：
 > `SELECT fingerprint FROM validation_manifests WHERE validation_run_id = '<validation-run-id>';`
 > 仅做冒烟/演示时，可用任意稳定短标识，例如 `hk-paper-demo-2026`。
-> 下文 `<run-id>`、`<order-id>`、`<approver>` 均为**占位符**，请替换为真实值，不要连同尖括号一起复制。
+>
+> `init` 会返回 `run_id`；**建议存进 shell 变量**（下方 `RUN_ID=...`），避免手工复制出错。
+> `paper list` 子命令尚未提供，run_id 丢失时可查库：
+> `docker compose exec -T postgres psql -U harbor -d harbor -c "SELECT run_id, status, created_at FROM paper_runs ORDER BY created_at DESC;"`
 
 ```bash
-# 初始化模拟盘运行（返回 run_id 与 DRAFT 状态）
-harbor-cli paper init --config examples/configs/paper/hk_paper.yaml \
-  --dataset-fingerprint hk-paper-demo-2026
+# 初始化模拟盘运行，并把 run_id 存进变量（DRAFT 状态）
+RUN_ID=$(harbor-cli paper init --config examples/configs/paper/hk_paper.yaml \
+  --dataset-fingerprint hk-paper-demo-2026 \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])')
+echo "$RUN_ID"   # 例：a4565661cbad4f468185716f5c9900e9
 
 # 审批并激活（DRAFT -> APPROVED -> ACTIVE，记录审批）
-harbor-cli paper start <run-id> --approver <approver>
+harbor-cli paper start "$RUN_ID" --approver jjxiong
 
 # 查询状态视图 / 停止（终态）
-harbor-cli paper status <run-id>
-harbor-cli paper stop <run-id>
+harbor-cli paper status "$RUN_ID"
+harbor-cli paper stop "$RUN_ID"
 ```
 
 ### 信号→订单（SP 4.85）
 
 ```bash
 # 从目标权重派生并持久化订单（不足一手的港股单被跳过并记录，不静默丢弃，SP 4.21）
-harbor-cli paper signal <run-id> --rebalance-date 2026-01-02 \
+harbor-cli paper signal "$RUN_ID" --rebalance-date 2026-01-02 \
   --target 0001.HK:0.5 --price 0001.HK:50.0
 
-# 订单列表 / 单笔订单
-harbor-cli paper order list <run-id>
-harbor-cli paper order show <run-id> <order-id>
+# 订单列表 / 单笔订单（order_id 同样存变量）
+harbor-cli paper order list "$RUN_ID"
+ORDER_ID=$(harbor-cli paper order list "$RUN_ID" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["order_id"])')
+harbor-cli paper order show "$RUN_ID" "$ORDER_ID"
 ```
 
 ### 审批（SP 4.86）
 
 ```bash
 # 人工审批/拒绝订单，审批记录（审批人、决策、规则、时间）可审计
-harbor-cli paper approve <run-id> --order-id <order-id> --approver <approver>
-harbor-cli paper reject <run-id> --order-id <order-id> --approver <approver>
+harbor-cli paper approve "$RUN_ID" --order-id "$ORDER_ID" --approver jjxiong
+harbor-cli paper reject "$RUN_ID" --order-id "$ORDER_ID" --approver jjxiong
 ```
 
 ### 对账与报告（SP 4.87）
 
 ```bash
 # 对账：重建账户并与净值快照比对，差异写入表并告警、不静默修正（SP 4.58 / 4.61）
-harbor-cli paper reconcile <run-id> --as-of 2026-01-02
+harbor-cli paper reconcile "$RUN_ID" --as-of 2026-01-02
 
 # 报告导出：JSON（默认）/ CSV / HTML（含状态、订单、审批与对账差异）
-harbor-cli paper report <run-id> --format json
-harbor-cli paper report <run-id> --format csv
-harbor-cli paper report <run-id> --format html
+harbor-cli paper report "$RUN_ID" --format json
+harbor-cli paper report "$RUN_ID" --format csv
+harbor-cli paper report "$RUN_ID" --format html
 ```
 
 ### 差异验证与监控（SP 4.69–4.83）
